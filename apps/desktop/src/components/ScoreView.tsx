@@ -80,7 +80,7 @@ export function ScoreView({ editable = false, flaggedNoteIds = [] }: Props) {
           cur.setAttribute('x', String(mb.x + frac * mb.width));
           cur.setAttribute('y', String(sys.y - 12));
           cur.setAttribute('height', String(sys.height + 24));
-          cur.style.opacity = status === 'stopped' && tick === 0 ? '0' : '1';
+          cur.style.opacity = '0'; // chỉ làm sáng nốt đang phát, không vẽ vạch qua cả khuông
           if (status === 'playing' && sys.index !== lastSystem) {
             lastSystem = sys.index;
             const host = hostRef.current;

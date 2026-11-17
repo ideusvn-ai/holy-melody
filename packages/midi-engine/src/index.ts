@@ -81,7 +81,15 @@ export class WebAudioEngine implements PlaybackEngine {
       this.ctx = new Ctor({ latencyHint: 'interactive' });
       this.master = this.ctx.createGain();
       this.master.gain.value = this.masterVol;
-      this.master.connect(this.ctx.destination);
+      // giới hạn đỉnh: nhiều bè cùng vang không bị vỡ tiếng; nhả chậm để âm lượng không "nhấp nhô"
+      const limiter = this.ctx.createDynamicsCompressor();
+      limiter.threshold.value = -6;
+      limiter.knee.value = 6;
+      limiter.ratio.value = 12;
+      limiter.attack.value = 0.003;
+      limiter.release.value = 0.6;
+      this.master.connect(limiter);
+      limiter.connect(this.ctx.destination);
     }
     return this.ctx;
   }

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
-import { applyMissedKey, cursorX, extractOmrGeometry, extractOmrSignals, extractSheetGeometry, importMusicXml, validateMusic, specialNotation, autoFixIssues, regionOf } from '../src/index.ts';
+import { applyMissedKey, concatScores, hasExplicitTime, cursorX, extractOmrGeometry, extractOmrSignals, extractSheetGeometry, importMusicXml, validateMusic, specialNotation, autoFixIssues, regionOf } from '../src/index.ts';
 
 const fx = (n: string) => new URL(`./fixtures/${n}`, import.meta.url);
 
@@ -88,6 +88,34 @@ test('áp dụng hoá biểu bị sót: Si thành Si giáng, trừ nốt có d�
   applyMissedKey(0, -1).apply(s);
   assert.equal(s.keyMap[0]!.fifths, -1);
   for (const n of allNotes()) if (n.pitch.step === 'B' && !n.writtenAccidental) assert.equal(n.pitch.alter, -1);
+});
+
+test('đầu nốt gắn đúng phách và khuông', () => {
+  const g = extractOmrGeometry([readFileSync(fx('audiveris-hymn.sheet.xml'), 'utf8')])!;
+  const m0 = g[0]!;
+  // ô lấy đà: 4 bè × 1 nốt ở phách 0, mỗi khuông một nốt
+  assert.equal(m0.heads!.length, 4);
+  assert.deepEqual(m0.heads!.map((h) => h[0]), [0, 0, 0, 0]);
+  assert.deepEqual([...new Set(m0.heads!.map((h) => h[1]))].sort(), [0, 1, 2, 3]);
+  const h = m0.heads!.find((x) => x[1] === 0)!;
+  assert.ok(Math.abs(h[2] - 403 / 2479) < 1e-6 && Math.abs(h[3] - 536 / 3508) < 1e-6);
+  // ô 1: phách thứ 2 (480 tick) có đầu nốt
+  assert.ok(g[1]!.heads!.some((x) => x[0] === 480));
+});
+
+test('ghép kết quả các trang nhận dạng song song', () => {
+  const xml = readFileSync(fx('audiveris-hymn.musicxml'), 'utf8');
+  const a = importMusicXml(xml);
+  const b = importMusicXml(xml);
+  const c = concatScores([a, b], [true, false])!;
+  assert.equal(c.measures.length, a.measures.length * 2);
+  assert.equal(c.timeSigMap.length, a.timeSigMap.length, 'trang 2 không thêm số chỉ nhịp');
+  assert.ok(!c.measures[a.measures.length]!.pickup);
+  const ids = new Set(c.measures.map((m) => m.id));
+  assert.equal(ids.size, c.measures.length, 'id ô nhịp không trùng');
+  assert.equal(hasExplicitTime(xml), true);
+  const d = importMusicXml(xml); d.parts.pop();
+  assert.equal(concatScores([a, d]), null);
 });
 
 void existsSync;

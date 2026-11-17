@@ -330,6 +330,8 @@ export interface SheetMeasureGeom extends SheetBox {
   system: number;
   /** Vị trí nốt theo thời gian: [tick trong ô nhịp, x tỉ lệ trang] — để con trỏ chạy đúng trên ảnh */
   ticks: [number, number][];
+  /** Đầu nốt trên ảnh gốc: [tick trong ô, khuông (thứ tự trong hệ thống, từ 0), x, y, w, h] (tỉ lệ trang) */
+  heads?: [number, number, number, number, number, number][];
 }
 
 export interface OmrSignal {
@@ -362,6 +364,8 @@ export interface SheetSource {
   /** overlay: chỉ phủ lớp nhận dạng lên ảnh để phát MIDI; edit: đã dựng khuông nhạc đầy đủ để biên tập */
   mode: 'overlay' | 'edit';
   conversion?: { at: string; credits: number; transactionId?: number };
+  /** Đang nhận dạng (hiển thị bản gốc ngay, kết quả về dần theo trang); không có = đã xong */
+  pending?: { done: number; total: number; error?: string };
   /** Vùng khó phát hiện từ dữ liệu Audiveris + ảnh nhị phân (điểm tin cậy thấp, nghi sót hoá biểu…) */
   signals?: OmrSignal[];
   reviews: Record<string, MeasureReview>;

@@ -56,7 +56,9 @@ interface State {
   harmonyPreview: ChordSymbol[] | null;
   setHarmonyPreview(c: ChordSymbol[] | null): void;
 
-  newProject(score?: ScoreDocument, fileName?: string): void;
+  newProject(score?: ScoreDocument, fileName?: string): string;
+  /** Thay toàn bộ bản nhạc của một dự án (kết quả nhận dạng về dần theo trang); lịch sử Undo bắt đầu lại */
+  replaceScore(projectId: string, score: ScoreDocument): void;
   closeProject(id: string): void;
   setActive(id: string): void;
   setTab(tab: MainTab): void;
@@ -148,6 +150,17 @@ export const useStore = create<State>((set, get) => {
       });
       set({ projects: [...get().projects, project], activeId: id, selection: { noteIds: [], eventIds: [] } });
       refresh();
+      return id;
+    },
+    replaceScore(projectId, score) {
+      const old = get().projects.find((p) => p.id === projectId);
+      if (!old) return;
+      const history = new CommandHistory(score);
+      history.onChange(() => {
+        if (get().activeId === projectId) refresh();
+      });
+      set({ projects: get().projects.map((p) => (p.id === projectId ? { ...p, score, history, savedRevision: score.revision } : p)) });
+      if (get().activeId === projectId) refresh();
     },
     closeProject(id) {
       const closing = get().projects.find((p) => p.id === id);

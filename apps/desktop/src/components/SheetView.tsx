@@ -1,11 +1,13 @@
 /**
  * Player cho bản nhạc mở từ ảnh/PDF: hiển thị trang gốc (PDF vẽ vector theo zoom) và lớp phủ nhận dạng
- * trong suốt để phát MIDI, tô sáng ô nhịp, con trỏ chạy theo nốt. Bấm vào ô nhịp để nhảy tới đó.
+ * trong suốt để phát MIDI. Khi phát, CHỈ các đầu nốt đang vang sáng lên (tọa độ đầu nốt từ Audiveris).
+ * Bấm vào ô nhịp để phát từ đó. Nhận dạng chạy nền: kết quả về dần theo trang.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { cursorX, measureAtTick, measureTicks, type SheetMeasureGeom, type SheetSource } from '@holy-melody/music-core';
+import { cursorX, HighlightIndex, measureAtTick, measureTicks, type SheetSource } from '@holy-melody/music-core';
 import { useActiveProject, useStore } from '../state/store';
 import { playbackPosition, usePlayback } from '../state/playback';
+import { OMR_STEPS, useOmrProgress } from '../state/omrProgress';
 import { getSheetAsset, imageUrl, renderPdfPage, type SheetAsset } from '../lib/sheet';
 import { ConvertDialog } from './ConvertDialog';
 
@@ -17,8 +19,11 @@ export function SheetView() {
   const [convert, setConvert] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
   const [avail, setAvail] = useState(900);
-  const [active, setActive] = useState<number | null>(null);
+  const layers = useRef(new Map<number, SVGGElement>());
   const cursors = useRef(new Map<number, SVGLineElement>());
+  const pageEls = useRef(new Map<number, HTMLDivElement>());
+  const sheet = project?.score.sheet;
+  const stage = useOmrProgress((s) => (project ? s.stage[project.score.id] ?? 0 : 0));
 
   useEffect(() => {
     const el = wrap.current;
@@ -28,66 +33,135 @@ export function SheetView() {
     return () => ro.disconnect();
   }, []);
 
-  const sheet = project?.score.sheet;
   const asset = project ? getSheetAsset(project.score.id) : undefined;
   const byMeasure = useMemo(() => new Map((sheet?.measures ?? []).map((g) => [g.measureIndex, g])), [sheet]);
+  const hi = useMemo(() => (tl ? new HighlightIndex(tl.spans) : null), [tl]);
+  // khuông thuộc bè: [khuông đầu, số khuông] theo thứ tự trong hệ thống
+  const partStaff = useMemo(() => {
+    const m = new Map<string, [number, number]>();
+    let at = 0;
+    for (const p of project?.score.parts ?? []) {
+      const n = Math.max(1, p.staves.length);
+      m.set(p.id, [at, n]);
+      at += n;
+    }
+    return m;
+  }, [project]);
 
-  // ---- con trỏ phát: đọc vị trí mỗi khung hình, chỉ render lại React khi đổi ô nhịp
+  // ---- mỗi khung hình: tìm nốt đang vang → làm sáng đầu nốt trên ảnh gốc
   useEffect(() => {
-    if (!tl || !project) return;
+    if (!tl || !hi || !project || !sheet) return;
     let raf = 0;
-    let last: number | null = -1;
-    const f = () => {
+    let lastKey = '';
+    let lastSystem = -1;
+    const aspectOf = (page: number) => {
+      const pg = sheet.pages[page];
+      return pg && pg.width ? pg.height / pg.width : 1.414;
+    };
+    const frame = () => {
       const tick = playbackPosition();
-      const pm = measureAtTick(tl, tick);
-      const mi = pm?.measureIndex ?? null;
-      if (mi !== last) {
-        last = mi;
-        setActive(mi);
+      const status = usePlayback.getState().status;
+      const active = status === 'playing' || tick > 0 ? hi.activeAt(tick) : [];
+      const keys = new Set<string>();
+      let fallback: { page: number; x: number; y: number; h: number } | null = null;
+      let focus: { page: number; y: number; system: number } | null = null;
+      for (const s of active) {
+        const pm = measureAtTick(tl, s.startTick);
+        if (!pm) continue;
+        const g = byMeasure.get(pm.measureIndex);
+        if (!g) continue;
+        focus ??= { page: g.page, y: g.y, system: g.system };
+        if (!g.heads?.length) {
+          const now = measureAtTick(tl, tick);
+          if (now) fallback = { page: g.page, x: cursorX(g, tick - now.startTick, measureTicks(project.score, g.measureIndex)), y: g.y, h: g.h };
+          continue;
+        }
+        const [first, n] = partStaff.get(s.partId) ?? [0, 99];
+        for (let st = first; st < first + n; st++) keys.add(`${pm.measureIndex}|${s.startTick - pm.startTick}|${st}`);
       }
-      const g = mi !== null ? byMeasure.get(mi) : undefined;
+      const key = [...keys].sort().join(',');
+      if (key !== lastKey) {
+        lastKey = key;
+        const perPage = new Map<number, string[]>();
+        for (const k of keys) {
+          const [mi, rel, st] = k.split('|').map(Number);
+          const g = byMeasure.get(mi!);
+          if (!g?.heads) continue;
+          const a = aspectOf(g.page);
+          for (const h of g.heads) {
+            if (h[0] !== rel || h[1] !== st) continue;
+            const pad = h[4] * 0.35;
+            const list = perPage.get(g.page) ?? [];
+            list.push(`<ellipse cx="${h[2] + h[4] / 2}" cy="${(h[3] + h[5] / 2) * a}" rx="${h[4] / 2 + pad}" ry="${(h[5] / 2) * a + pad}" />`);
+            perPage.set(g.page, list);
+          }
+        }
+        for (const [page, layer] of layers.current) layer.innerHTML = (perPage.get(page) ?? []).join('');
+      }
       for (const [page, line] of cursors.current) {
-        if (g && g.page === page && pm) {
-          const x = cursorX(g, tick - pm.startTick, measureTicks(project.score, g.measureIndex));
-          const pg = project.score.sheet?.pages[page];
-          const aspect = pg && pg.width ? pg.height / pg.width : 1.414;
-          line.setAttribute('x1', String(x));
-          line.setAttribute('x2', String(x));
-          line.setAttribute('y1', String(g.y * aspect));
-          line.setAttribute('y2', String((g.y + g.h) * aspect));
+        if (fallback && fallback.page === page) {
+          const a = aspectOf(page);
+          line.setAttribute('x1', String(fallback.x));
+          line.setAttribute('x2', String(fallback.x));
+          line.setAttribute('y1', String(fallback.y * a));
+          line.setAttribute('y2', String((fallback.y + fallback.h) * a));
           line.style.display = '';
         } else line.style.display = 'none';
       }
-      raf = requestAnimationFrame(f);
+      // tự cuộn theo dòng nhạc đang phát
+      if (focus && status === 'playing' && focus.system !== lastSystem) {
+        lastSystem = focus.system;
+        const el = pageEls.current.get(focus.page);
+        const host = wrap.current;
+        if (el && host) {
+          const top = el.offsetTop + focus.y * el.clientHeight - 80;
+          if (top < host.scrollTop || top > host.scrollTop + host.clientHeight - 200) {
+            host.scrollTo({ top, behavior: useStore.getState().reducedMotion ? 'auto' : 'smooth' });
+          }
+        }
+      }
+      raf = requestAnimationFrame(frame);
     };
-    raf = requestAnimationFrame(f);
+    raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [tl, project, byMeasure]);
+  }, [tl, hi, project, sheet, byMeasure, partStaff]);
 
   if (!project || !sheet) return null;
-  const measureIds = project.score.measures.map((m) => m.id);
   const width = Math.max(320, Math.min(avail, 1100) * zoom);
   const seekTo = (mi: number) => {
     const m = tl?.measures.find((x) => x.measureIndex === mi);
     if (m) usePlayback.getState().seek(m.startTick);
   };
+  const pending = sheet.pending;
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
       <div className="flex items-center gap-3 px-4 h-10 border-b border-line bg-surface text-[12px]">
-        <span className="font-medium truncate">Bản gốc: {sheet.fileName}</span>
-        <span className="text-muted">{sheet.pages.length} trang · lớp nhận dạng {sheet.measures.length || project.score.measures.length} ô nhịp</span>
-        <label className="flex items-center gap-1.5 text-muted ml-2">
-          <input type="checkbox" checked={showBoxes} onChange={(e) => setShowBoxes(e.target.checked)} /> Hiện khung ô nhịp
+        <span className="font-medium truncate max-w-64">Bản gốc: {sheet.fileName}</span>
+        {pending && !pending.error ? (
+          <span className="flex items-center gap-2 text-muted min-w-0">
+            <span className="h-3 w-3 shrink-0 rounded-full border-2 border-accent border-t-transparent animate-spin" aria-hidden />
+            <span className="truncate">
+              Đang nhận dạng{pending.total > 1 ? ` · xong ${pending.done}/${pending.total} trang` : ''}{stage ? ` · ${OMR_STEPS[Math.min(stage, 10) - 1]}` : ''}
+              {pending.done > 0 ? ' · đã phát được phần đã nhận dạng' : ''}
+            </span>
+          </span>
+        ) : pending?.error ? (
+          <span className="text-warn truncate">Không nhận dạng được: {pending.error}</span>
+        ) : (
+          <span className="text-muted">{sheet.pages.length} trang · {sheet.measures.length || project.score.measures.length} ô nhịp</span>
+        )}
+        <label className="flex items-center gap-1.5 text-muted ml-2 shrink-0">
+          <input type="checkbox" checked={showBoxes} onChange={(e) => setShowBoxes(e.target.checked)} /> Khung ô nhịp
         </label>
         <div className="flex-1" />
         {sheet.mode === 'overlay' ? (
-          <button className="h-7 px-3 rounded-md bg-accent text-accent-fg font-semibold" onClick={() => setConvert(true)}>Chuyển sang Edit · 10 credit</button>
+          <button className="h-7 px-3 rounded-md bg-accent text-accent-fg font-semibold disabled:opacity-40 shrink-0" disabled={!!pending} onClick={() => setConvert(true)}>Chuyển sang Edit · 10 credit</button>
         ) : (
-          <button className="h-7 px-3 rounded-md border border-line hover:bg-surface-2" onClick={() => useStore.getState().setTab('editor')}>Mở Score Editor</button>
+          <button className="h-7 px-3 rounded-md border border-line hover:bg-surface-2 shrink-0" onClick={() => useStore.getState().setTab('editor')}>Mở Score Editor</button>
         )}
       </div>
-      <div ref={wrap} className="flex-1 overflow-auto bg-surface-2 py-6">
+      <div ref={wrap} className="relative flex-1 overflow-auto bg-surface-2 py-6">
         {!asset && (
           <p className="mx-auto max-w-lg text-center text-muted text-[13px] mt-10">
             Không có file ảnh/PDF gốc trong phiên này (bản tự lưu không kèm file gốc). Hãy mở file <b>.holymelody</b> đã lưu hoặc mở lại file gốc.
@@ -95,13 +169,15 @@ export function SheetView() {
         )}
         {asset && sheet.pages.map((pg, i) => (
           <SheetPageView
-            key={i} index={i} page={pg} asset={asset} width={width} sheet={sheet}
-            active={active} showBoxes={showBoxes} onSeek={seekTo} measureIds={measureIds}
+            key={i} index={i} page={pg} asset={asset} width={width} sheet={sheet} showBoxes={showBoxes} onSeek={seekTo}
+            measureIds={project.score.measures.map((m) => m.id)}
+            pageRef={(el) => { if (el) pageEls.current.set(i, el); else pageEls.current.delete(i); }}
+            layerRef={(el) => { if (el) layers.current.set(i, el); else layers.current.delete(i); }}
             cursorRef={(el) => { if (el) cursors.current.set(i, el); else cursors.current.delete(i); }}
           />
         ))}
-        {asset && !sheet.measures.length && (
-          <p className="mx-auto max-w-lg text-center text-muted text-[12px] mt-2">Audiveris không trả về tọa độ ô nhịp cho file này: vẫn phát được, nhưng không tô sáng trên ảnh.</p>
+        {asset && !pending && !sheet.measures.length && (
+          <p className="mx-auto max-w-lg text-center text-muted text-[12px] mt-2">Audiveris không trả về tọa độ cho file này: vẫn phát được, nhưng không làm sáng nốt trên ảnh.</p>
         )}
       </div>
       {convert && <ConvertDialog onClose={() => setConvert(false)} />}
@@ -111,10 +187,10 @@ export function SheetView() {
 
 function SheetPageView(props: {
   index: number; page: SheetSource['pages'][number]; asset: SheetAsset; width: number; sheet: SheetSource;
-  active: number | null; showBoxes: boolean; onSeek: (mi: number) => void; cursorRef: (el: SVGLineElement | null) => void;
-  measureIds: string[];
+  showBoxes: boolean; onSeek: (mi: number) => void; measureIds: string[];
+  pageRef: (el: HTMLDivElement | null) => void; layerRef: (el: SVGGElement | null) => void; cursorRef: (el: SVGLineElement | null) => void;
 }) {
-  const { index, page, asset, width, sheet, active, showBoxes, onSeek, cursorRef, measureIds } = props;
+  const { index, page, asset, width, sheet, showBoxes, onSeek, measureIds, pageRef, layerRef, cursorRef } = props;
   const canvas = useRef<HTMLCanvasElement>(null);
   const aspect = page.width && page.height ? page.height / page.width : 1.414;
   const height = width * aspect;
@@ -127,32 +203,31 @@ function SheetPageView(props: {
   }, [asset, index, width]);
 
   const measures = sheet.measures.filter((g) => g.page === index);
-  const fill = (g: SheetMeasureGeom) => {
-    if (g.measureIndex === active) return 'var(--hl)';
-    const id = measureIds[g.measureIndex];
-    if (sheet.mode === 'edit' && id && sheet.reviews[id]?.status === 'flagged') return 'rgba(214,120,60,.14)';
-    return 'transparent';
-  };
-
   return (
-    <div className="relative mx-auto mb-6 bg-white shadow-md" style={{ width, height }}>
+    <div ref={pageRef} className="relative mx-auto mb-6 bg-white shadow-md" style={{ width, height }}>
       {asset.kind === 'pdf' ? (
         <canvas ref={canvas} style={{ width, height }} className="block" aria-label={`Trang ${index + 1}`} />
       ) : (
         <img src={imageUrl(asset)} alt={`Trang ${index + 1}`} style={{ width, height }} className="block select-none" draggable={false} />
       )}
       <svg className="absolute inset-0" width={width} height={height} viewBox={`0 0 1 ${aspect}`} preserveAspectRatio="none" aria-hidden>
-        {measures.map((g) => (
-          <rect
-            key={g.measureIndex} x={g.x} y={g.y * aspect} width={g.w} height={g.h * aspect}
-            fill={fill(g)} fillOpacity={g.measureIndex === active ? 0.35 : 1}
-            stroke={showBoxes ? 'var(--accent)' : 'transparent'} strokeWidth={1} vectorEffect="non-scaling-stroke"
-            className="cursor-pointer hover:fill-[var(--accent)] hover:[fill-opacity:.08]"
-            onClick={() => onSeek(g.measureIndex)}
-          >
-            <title>Ô {g.measureIndex + 1} · bấm để phát từ đây</title>
-          </rect>
-        ))}
+        {measures.map((g) => {
+          const id = measureIds[g.measureIndex];
+          const flagged = sheet.mode === 'edit' && id && sheet.reviews[id]?.status === 'flagged';
+          return (
+            <rect
+              key={g.measureIndex} x={g.x} y={g.y * aspect} width={g.w} height={g.h * aspect}
+              fill={flagged ? 'rgba(214,120,60,.12)' : 'transparent'}
+              stroke={showBoxes ? 'var(--accent)' : 'transparent'} strokeWidth={1} vectorEffect="non-scaling-stroke"
+              className="cursor-pointer hover:fill-[var(--accent)] hover:[fill-opacity:.06]"
+              onClick={() => onSeek(g.measureIndex)}
+            >
+              <title>Ô {g.measureIndex + 1} · bấm để phát từ đây</title>
+            </rect>
+          );
+        })}
+        {/* đầu nốt đang vang: vẽ trực tiếp mỗi khung hình (không qua React) */}
+        <g ref={layerRef} className="hm-sheet-notes" pointerEvents="none" />
         <line ref={cursorRef} y1={0} y2={0} stroke="var(--accent)" strokeWidth={2} vectorEffect="non-scaling-stroke" style={{ display: 'none' }} />
       </svg>
     </div>

@@ -159,7 +159,7 @@ fn find_ext(dir: &Path, ext: &str) -> Option<PathBuf> {
 /// `options`: các cặp `khoá=giá trị` truyền qua `-option` (dùng khi nhận dạng lại một vùng với cấu hình khác).
 /// `job`: tên thư mục kết quả riêng, để nhiều lần chạy (theo vùng) không ghi đè nhau.
 #[tauri::command]
-pub async fn omr_run(app: AppHandle, input: String, options: Option<Vec<String>>, job: Option<String>) -> Result<OmrOutput, String> {
+pub async fn omr_run(app: AppHandle, input: String, options: Option<Vec<String>>, job: Option<String>, sheets: Option<String>) -> Result<OmrOutput, String> {
     let exe = find(&app).ok_or("Không tìm thấy Audiveris đóng gói kèm. Hãy cài lại Holy Melody.")?;
     let input = PathBuf::from(input);
     if !input.is_file() {
@@ -182,6 +182,13 @@ pub async fn omr_run(app: AppHandle, input: String, options: Option<Vec<String>>
         {
             use std::os::windows::process::CommandExt;
             cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: không bật cửa sổ console
+        }
+        // chỉ nhận dạng một số trang (chạy song song nhiều tiến trình cho PDF nhiều trang)
+        if let Some(sh) = sheets.as_deref().filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit() || c == '-' || c == ' ')) {
+            cmd.arg("-sheets");
+            for part in sh.split_whitespace() {
+                cmd.arg(part);
+            }
         }
         let mut child = cmd
             .arg("-batch")
@@ -262,4 +269,30 @@ pub fn omr_temp_input(name: String) -> String {
     let dir = std::env::temp_dir().join("holy-melody-input");
     let _ = std::fs::create_dir_all(&dir);
     dir.join(safe).display().to_string()
+}
+
+// ---------------------------------------------------------------- bộ nhớ đệm kết quả nhận dạng
+// Khoá = SHA-256 của file gốc: mở lại cùng một file là có ngay, không chạy lại Audiveris.
+
+fn cache_file(app: &AppHandle, hash: &str) -> Result<PathBuf, String> {
+    if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("Mã băm không hợp lệ".into());
+    }
+    let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("omr");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.join(format!("{hash}-v2.json")))
+}
+
+#[tauri::command]
+pub fn omr_cache_get(app: AppHandle, hash: String) -> Result<Option<String>, String> {
+    let f = cache_file(&app, &hash)?;
+    Ok(std::fs::read_to_string(f).ok())
+}
+
+#[tauri::command]
+pub fn omr_cache_put(app: AppHandle, hash: String, json: String) -> Result<(), String> {
+    let f = cache_file(&app, &hash)?;
+    let tmp = f.with_extension("tmp");
+    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &f).map_err(|e| e.to_string())
 }

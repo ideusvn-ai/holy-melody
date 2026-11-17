@@ -24,9 +24,16 @@ for f in ci-logs/omr/in/*; do
   timeout 600 "$EXE" -batch -export -save -output "ci-logs/omr/out/$b" -- "$f" > "ci-logs/omr/out/$b.log" 2>&1
   echo "$b exit=$? $(( $(date +%s) - start ))s" | tee -a ci-logs/omr/summary.txt
 done
+# PDF 2 trang: cả file một lần so với từng trang song song (-sheets)
+cp scripts/ci/omr-samples/two-pages.pdf ci-logs/omr/in/
+t0=$(date +%s); timeout 600 "$EXE" -batch -export -save -output ci-logs/omr/out/pdf-all -- ci-logs/omr/in/two-pages.pdf > ci-logs/omr/out/pdf-all.log 2>&1; echo "pdf-all exit=$? $(( $(date +%s) - t0 ))s" | tee -a ci-logs/omr/summary.txt
+t0=$(date +%s)
+( timeout 600 "$EXE" -sheets 1 -batch -export -save -output ci-logs/omr/out/pdf-p1 -- ci-logs/omr/in/two-pages.pdf > ci-logs/omr/out/pdf-p1.log 2>&1; echo "pdf-p1 exit=$?" >> ci-logs/omr/summary.txt ) &
+( timeout 600 "$EXE" -sheets 2 -batch -export -save -output ci-logs/omr/out/pdf-p2 -- ci-logs/omr/in/two-pages.pdf > ci-logs/omr/out/pdf-p2.log 2>&1; echo "pdf-p2 exit=$?" >> ci-logs/omr/summary.txt ) &
+wait; echo "pdf-parallel-2 $(( $(date +%s) - t0 ))s (nproc=$(nproc), RAM=$(free -g | awk '/Mem/{print $2}')G)" | tee -a ci-logs/omr/summary.txt
 # giải nén .mxl để đọc được bằng git
 find ci-logs/omr/out -name '*.mxl' | while read m; do d="${m%.mxl}.xml.d"; mkdir -p "$d"; unzip -o -q "$m" -d "$d"; done
 find ci-logs/omr/out -name '*.omr' | while read m; do unzip -l "$m" > "$m.list.txt"; d="${m%.omr}.omr.d"; mkdir -p "$d"; unzip -o -q "$m" -d "$d" '*.xml' || true; done
-rm -f ci-logs/omr/in/*.png ci-logs/omr/in/*.jpg
+rm -f ci-logs/omr/in/*.png ci-logs/omr/in/*.jpg ci-logs/omr/in/*.pdf
 find ci-logs/omr -type f | head -100
 exit 0

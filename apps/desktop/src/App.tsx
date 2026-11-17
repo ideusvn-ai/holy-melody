@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useActiveProject, useStore, type MainTab } from './state/store';
 import { usePlayback } from './state/playback';
 import { detectKind, exportMidiFile, exportMusicXmlFile, importFile, saveProject } from './lib/fileio';
-import { OmrDialog } from './components/OmrDialog';
+import { openSheet } from './lib/sheet';
+import { useOmrProgress } from './state/omrProgress';
 import { AccountMenu } from './components/AccountMenu';
 import { listRecoverable, markClean, recover, startAutosave, type Recoverable } from './lib/autosave';
 import { verifyMeasures } from '@holy-melody/music-core';
@@ -58,12 +59,11 @@ export function App() {
     return startAutosave();
   }, []);
 
-  const [omrFile, setOmrFile] = useState<File | null>(null);
   const openFiles = async (files: FileList | File[]) => {
     for (const f of Array.from(files)) {
       const kind = detectKind(f.name);
       if (kind === 'image' || kind === 'pdf') {
-        setOmrFile(f);
+        openSheetFile(f);
         continue;
       }
       try {
@@ -79,6 +79,25 @@ export function App() {
 
   // "Mới" khi đang có dự án: về màn hình chào để chọn mẫu; khi chưa có: đã ở màn hình chào
   const newBlank = () => { st.setActive(''); };
+
+  /** Ảnh/PDF: hiện bản gốc ngay, nhận dạng chạy nền, kết quả về dần theo trang */
+  const openSheetFile = (f: File) => {
+    let pid: string | undefined;
+    let sid = '';
+    void openSheet(f, {
+      onPlaceholder: (s) => {
+        sid = s.id;
+        pid = useStore.getState().newProject(s, f.name);
+        useStore.getState().setTab('player');
+      },
+      onUpdate: (s) => pid && useStore.getState().replaceScore(pid, s),
+      onProgress: (stage) => stage && sid && useOmrProgress.getState().set(sid, stage),
+    })
+      .then((s) => st.notify(s.sheet?.measures.length
+        ? `Đã nhận dạng xong ${f.name}. Bấm Phát để nghe; nốt đang phát sáng ngay trên bản gốc.`
+        : `Đã nhận dạng ${f.name}, nhưng không có tọa độ để tô sáng trên ảnh.`))
+      .catch((e) => st.notify(`Không nhận dạng được ${f.name}: ${String((e as Error).message ?? e)}`, 'error'));
+  };
 
   const save = async () => {
     if (!project) return;
@@ -263,7 +282,6 @@ export function App() {
           <button className="text-[12px] underline text-muted" onClick={() => { for (const r of recoverable) void markClean(r.id); setRecoverable([]); }}>Bỏ qua</button>
         </div>
       )}
-      {omrFile && <OmrDialog file={omrFile} onClose={() => setOmrFile(null)} />}
       {st.paletteOpen && <Palette commands={commands} onClose={() => st.setPalette(false)} />}
       {st.toast && (
         <div role="status" className={`fixed bottom-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-[12px] hm-enter max-w-xl ${st.toast.kind === 'error' ? 'bg-warn text-white' : 'bg-fg text-bg'}`}>{st.toast.text}</div>

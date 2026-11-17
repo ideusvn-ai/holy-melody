@@ -2,7 +2,7 @@
 import { createRoot } from 'react-dom/client';
 import { App } from '../../apps/desktop/src/App';
 import { useStore } from '../../apps/desktop/src/state/store';
-import { detectHardRegions, pdfOf, setSheetAsset, type SheetAsset } from '../../apps/desktop/src/lib/sheet';
+import { detectHardRegions, fixOmrInstruments, pdfOf, setSheetAsset, type SheetAsset } from '../../apps/desktop/src/lib/sheet';
 import { enterEditMode, extractOmrGeometry, importMusicXml, markAllUnverified, validateMusic } from '@holy-melody/music-core';
 
 const q = new URLSearchParams(location.search);
@@ -16,6 +16,7 @@ if (demo) {
   const score = importMusicXml(xml);
   score.meta.title = 'Thánh ca (Audiveris)';
   markAllUnverified(score);
+  fixOmrInstruments(score);
   const asset: SheetAsset = demo === 'pdf' ? { kind: 'pdf', bytes: new Uint8Array(bin), mime: 'application/pdf' } : { kind: 'image', bytes: new Uint8Array(bin), mime: 'image/png' };
   let pages = [{ file: 'source.png', width: 2479, height: 3508 }];
   if (demo === 'pdf') {

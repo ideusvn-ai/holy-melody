@@ -110,8 +110,35 @@ struct Inner {
     pending_offs: Vec<(u64, i32, i32)>,
     chans: [Chan; 16],
     master: f32,
+    /// Hệ số của bộ giới hạn đỉnh (1.0 = không giảm)
+    limiter_gain: f32,
     left: Vec<f32>,
     right: Vec<f32>,
+}
+
+/// Ngưỡng đỉnh của bộ giới hạn: chừa khoảng trống để không bao giờ vỡ tiếng
+const LIMIT_CEILING: f32 = 0.89;
+
+/// Bộ giới hạn đỉnh mềm: giảm NGAY khi đỉnh vượt ngưỡng (không vỡ tiếng), hồi CHẬM (~0,8 giây) để không
+/// tạo cảm giác âm lượng "nhấp nhô". Hệ số chuyển mượt trong mỗi khối để không gây tiếng lách tách.
+fn limit_block(left: &mut [f32], right: &mut [f32], gain: &mut f32, sample_rate: f64) {
+    let n = left.len();
+    if n == 0 {
+        return;
+    }
+    let peak = left.iter().chain(right.iter()).fold(0f32, |m, s| m.max(s.abs()));
+    let target = if peak * *gain > LIMIT_CEILING { LIMIT_CEILING / peak.max(1e-6) } else { *gain };
+    let release = (-(n as f64) / (0.8 * sample_rate)).exp() as f32;
+    let next = if target < *gain { target } else { 1.0 - (1.0 - *gain) * release };
+    let next = next.clamp(0.05, 1.0);
+    let start = *gain;
+    for i in 0..n {
+        let g = start + (next - start) * (i as f32 + 1.0) / n as f32;
+        // không để mẫu nào vượt ngưỡng kể cả trong đoạn chuyển
+        left[i] = (left[i] * g).clamp(-LIMIT_CEILING, LIMIT_CEILING);
+        right[i] = (right[i] * g).clamp(-LIMIT_CEILING, LIMIT_CEILING);
+    }
+    *gain = next;
 }
 
 impl Inner {
@@ -141,6 +168,7 @@ impl Inner {
             pending_offs: Vec::new(),
             chans: [Chan::default(); 16],
             master: 0.8,
+            limiter_gain: 1.0,
             left: vec![0.0; BLOCK],
             right: vec![0.0; BLOCK],
         })
@@ -297,6 +325,8 @@ impl Inner {
                 *s *= self.master;
             }
         }
+        let sr = self.sample_rate;
+        limit_block(&mut self.left[..frames], &mut self.right[..frames], &mut self.limiter_gain, sr);
         self.sample_clock = block_end_clock;
         finished
     }
@@ -591,6 +621,31 @@ fn write_wav(path: &Path, sr: u32, pcm: &[i16]) -> std::io::Result<()> {
         f.write_all(&s.to_le_bytes())?;
     }
     f.flush()
+}
+
+#[cfg(test)]
+mod limiter_tests {
+    use super::*;
+    #[test]
+    fn never_exceeds_ceiling_and_recovers() {
+        let mut g = 1.0;
+        let mut l = vec![2.0f32; 256];
+        let mut r = vec![-2.0f32; 256];
+        limit_block(&mut l, &mut r, &mut g, 48000.0);
+        assert!(l.iter().chain(r.iter()).all(|s| s.abs() <= LIMIT_CEILING + 1e-6));
+        // tín hiệu nhỏ: hệ số hồi dần về 1, không nhảy đột ngột
+        let before = g;
+        let mut l2 = vec![0.1f32; 256];
+        let mut r2 = vec![0.1f32; 256];
+        limit_block(&mut l2, &mut r2, &mut g, 48000.0);
+        assert!(g > before && g < before + 0.05);
+        for _ in 0..2000 {
+            let mut a = vec![0.1f32; 256];
+            let mut b = vec![0.1f32; 256];
+            limit_block(&mut a, &mut b, &mut g, 48000.0);
+        }
+        assert!(g > 0.99);
+    }
 }
 
 #[cfg(test)]

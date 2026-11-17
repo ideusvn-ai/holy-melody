@@ -7,6 +7,12 @@ import { ConvertDialog } from '../components/ConvertDialog';
 import { useActiveProject, useStore } from '../state/store';
 import { playbackPosition, usePlayback } from '../state/playback';
 
+/** Nhạc cụ hay dùng (GM program 0-based) */
+const INSTRUMENTS: [number, string][] = [
+  [19, 'Organ nhà thờ'], [0, 'Piano'], [16, 'Organ điện'], [52, 'Hợp xướng (Aah)'], [53, 'Giọng hát (Ooh)'],
+  [48, 'Dàn dây'], [40, 'Violin'], [42, 'Cello'], [73, 'Sáo'], [71, 'Clarinet'], [24, 'Guitar'], [46, 'Đàn hạc'],
+];
+
 export function PlayerLeft() {
   const project = useActiveProject();
   const engine = usePlayback((s) => s.engine);
@@ -14,6 +20,7 @@ export function PlayerLeft() {
   const [, force] = useState(0);
   const midi = useMidiInput();
   const notify = useStore((s) => s.notify);
+  const exec = useStore((s) => s.exec);
   useEffect(() => {
     void midi.refresh();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -54,7 +61,18 @@ export function PlayerLeft() {
             {slider('Âm lượng', c.volume, 0, 1, (v) => upd(p.id, { volume: v }))}
             {slider('Pan', c.pan, -1, 1, (v) => upd(p.id, { pan: v }))}
             {slider('Reverb', c.reverb, 0, 1, (v) => upd(p.id, { reverb: v }))}
-            <div className="text-[10px] text-muted">GM #{p.instrument.program + 1} · kênh {p.instrument.channel + 1}</div>
+            <label className="flex items-center gap-2 text-[10.5px] text-muted">
+              <span className="w-10">Nhạc cụ</span>
+              <select className="flex-1 h-6 rounded border border-line bg-surface px-1 text-[11px] text-fg" value={p.instrument.program}
+                onChange={(e) => {
+                  const program = Number(e.target.value);
+                  const name = INSTRUMENTS.find((x) => x[0] === program)?.[1] ?? `GM #${program + 1}`;
+                  exec({ label: 'Đổi nhạc cụ', scope: () => ({ kind: 'all' }), apply: (sc) => { const pp = sc.parts.find((x) => x.id === p.id); if (pp) { pp.instrument.program = program; pp.instrument.name = name; } sc.revision++; } });
+                }}>
+                {!INSTRUMENTS.some((x) => x[0] === p.instrument.program) && <option value={p.instrument.program}>{p.instrument.name || `GM #${p.instrument.program + 1}`}</option>}
+                {INSTRUMENTS.map(([prog, name]) => <option key={prog} value={prog}>{name}</option>)}
+              </select>
+            </label>
           </div>
         );
       })}
@@ -191,6 +209,16 @@ export function VirtualPiano() {
   }, [engine]);
 
   const held = useMidiInput((s) => s.held);
+  const [mouseKey, setMouseKey] = useState<number | null>(null);
+  useEffect(() => {
+    const up = () => setMouseKey(null);
+    window.addEventListener('mouseup', up);
+    window.addEventListener('blur', up);
+    return () => { window.removeEventListener('mouseup', up); window.removeEventListener('blur', up); };
+  }, []);
+  const press = (m: number) => { setMouseKey(m); engine.previewNote(m); };
+  const glide = (m: number) => { if (mouseKey !== null && mouseKey !== m) press(m); };
+  const down = (m: number) => pressed.has(m) || held.has(m) || mouseKey === m;
   useEffect(() => useMidiInput.getState().onChord((ps, v) => {
     if (useStore.getState().tab === 'player') for (const p of ps) engine.previewNote(p, v);
   }), [engine]);
@@ -203,9 +231,10 @@ export function VirtualPiano() {
         {whites.map((m, i) => (
           <button
             key={m}
-            className={`absolute top-0 bottom-0 border border-line rounded-b-sm transition-colors ${lit.has(m) ? 'bg-[var(--hl)]' : pressed.has(m) || held.has(m) ? 'bg-accent-soft' : 'bg-white'}`}
+            className={`absolute top-0 bottom-0 border border-line rounded-b-sm transition-colors duration-75 ${down(m) ? 'bg-[var(--hl)] hm-key-down z-[1]' : lit.has(m) ? 'bg-[var(--hl)]' : 'bg-white'}`}
             style={{ left: `${i * ww}%`, width: `${ww}%` }}
-            onMouseDown={() => engine.previewNote(m)}
+            onMouseDown={(e) => { e.preventDefault(); press(m); }}
+            onMouseEnter={() => glide(m)}
             aria-label={`Phím ${m}`}
           >
             {m % 12 === 0 && <span className="absolute bottom-0.5 left-0 right-0 text-[8px] text-muted">C{m / 12 - 1}</span>}
@@ -218,9 +247,10 @@ export function VirtualPiano() {
             return (
               <button
                 key={m}
-                className={`absolute top-0 h-[60%] rounded-b-sm z-10 ${lit.has(m) ? 'bg-[var(--hl)]' : held.has(m) ? 'bg-accent' : 'bg-neutral-900'}`}
+                className={`absolute top-0 h-[60%] rounded-b-sm z-10 transition-colors duration-75 ${down(m) ? 'bg-accent hm-key-down' : lit.has(m) ? 'bg-[var(--hl)]' : 'bg-neutral-900'}`}
                 style={{ left: `${(leftWhite + 0.68) * ww}%`, width: `${ww * 0.64}%` }}
-                onMouseDown={() => engine.previewNote(m)}
+                onMouseDown={(e) => { e.preventDefault(); press(m); }}
+                onMouseEnter={() => glide(m)}
                 aria-label={`Phím ${m}`}
               />
             );

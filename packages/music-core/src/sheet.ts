@@ -4,7 +4,7 @@
  * Audiveris tính "tenths" trực tiếp từ ảnh quét (theo khoảng cách dòng kẻ), nên page-width/height tương ứng
  * đúng toàn bộ ảnh: x_ảnh = x_tenths / page-width. Không phụ thuộc độ phân giải hiển thị.
  */
-import { TICKS_PER_QUARTER, type SheetBox, type SheetMeasureGeom } from './model.js';
+import { TICKS_PER_QUARTER, type ScoreDocument, type SheetBox, type SheetMeasureGeom } from './model.js';
 import { child, childNum, kids, parseXml, type XmlElement } from './xml.js';
 
 interface PageLayout {
@@ -235,6 +235,12 @@ export function extractOmrGeometry(sheets: string[]): SheetMeasureGeom[] | null 
       const interline = Math.max(8, (bottom - top) / 40 * 4); // ước lượng thô, chỉ để chừa lề
       const padTop = Math.max(interline * 2.5, 30);
       const padBottom = Math.max(interline * 3.5, 40); // lời ca nằm dưới khuông
+      // đầu nốt của hệ thống, gắn với thứ tự khuông trong hệ thống
+      const staffOrder = [...body.matchAll(/<staff\s[^>]*\bid="(\d+)"/g)].map((m) => m[1]!);
+      const heads = [...body.matchAll(/<head\s([^>]*)>\s*<bounds x="([\d.]+)" y="([\d.]+)" w="([\d.]+)" h="([\d.]+)"/g)].map((m) => ({
+        staff: Math.max(0, staffOrder.indexOf(attr(' ' + m[1]!, 'staff') ?? '')),
+        x: Number(m[2]), y: Number(m[3]), w: Number(m[4]), h: Number(m[5]),
+      }));
       const stackRe = /<stack\s([^>]*)>([\s\S]*?)<\/stack>|<stack\s([^>]*)\/>/g;
       let st: RegExpExecArray | null;
       while ((st = stackRe.exec(body))) {
@@ -248,10 +254,20 @@ export function extractOmrGeometry(sheets: string[]): SheetMeasureGeom[] | null 
           const to = frac(attr(s[0], 'time-offset'));
           if (Number.isFinite(xo)) ticks.push([Math.round(to * 4 * TICKS_PER_QUARTER), (left + xo) / W]);
         }
+        ticks.sort((a, b) => a[0] - b[0]);
+        // mỗi đầu nốt thuộc phách gần nhất (tâm đầu nốt trùng vị trí phách của Audiveris)
+        const hs: [number, number, number, number, number, number][] = [];
+        for (const h of heads) {
+          const cx = h.x + h.w / 2;
+          if (cx < left || cx >= right || !ticks.length) continue;
+          let best = ticks[0]!;
+          for (const t of ticks) if (Math.abs(t[1] * W - cx) < Math.abs(best[1] * W - cx)) best = t;
+          hs.push([best[0], h.staff, h.x / W, h.y / H, h.w / W, h.h / H]);
+        }
         out.push({
           page, system: sysIndex, measureIndex: mi++,
           x: left / W, y: Math.max(0, top - padTop) / H, w: (right - left) / W, h: (bottom - top + padTop + padBottom) / H,
-          ticks: ticks.sort((a, b) => a[0] - b[0]),
+          ticks, heads: hs,
         });
       }
       sysIndex++;
@@ -325,4 +341,42 @@ export function extractOmrSignals(sheets: string[], geom: SheetMeasureGeom[]): O
     grades: [...grades].map(([measureIndex, v]) => ({ measureIndex, min: Math.min(...v), mean: v.reduce((a, b) => a + b, 0) / v.length, count: v.length })),
     keyGaps,
   };
+}
+
+/**
+ * Ghép kết quả nhận dạng từng trang (chạy song song) thành một bản nhạc. Trang sau không có số chỉ nhịp
+ * in trên giấy (`explicitTime[k] = false`) thì dùng tiếp số chỉ nhịp của trang trước.
+ * Trả về null nếu số bè giữa các trang khác nhau (khi đó nên nhận dạng cả file một lần).
+ */
+export function concatScores(pages: ScoreDocument[], explicitTime: boolean[] = []): ScoreDocument | null {
+  const first = pages[0];
+  if (!first) return null;
+  if (pages.some((p) => p.parts.length !== first.parts.length)) return null;
+  const out: ScoreDocument = JSON.parse(JSON.stringify(first));
+  for (let k = 1; k < pages.length; k++) {
+    const p = pages[k]!;
+    const off = out.measures.length;
+    p.measures.forEach((m, i) => out.measures.push({ ...m, pickup: undefined, actualTicks: i === 0 && m.pickup ? undefined : m.actualTicks }));
+    p.parts.forEach((part, pi) => Object.assign(out.parts[pi]!.content, part.content));
+    const lastKey = out.keyMap[out.keyMap.length - 1];
+    for (const kk of p.keyMap) if (!(kk.measureIndex === 0 && lastKey && lastKey.fifths === kk.fifths && lastKey.mode === kk.mode)) out.keyMap.push({ ...kk, measureIndex: kk.measureIndex + off });
+    const lastTs = out.timeSigMap[out.timeSigMap.length - 1];
+    for (const t of p.timeSigMap) {
+      if (t.measureIndex === 0 && (!explicitTime[k] || (lastTs && lastTs.beats === t.beats && lastTs.beatType === t.beatType))) continue;
+      out.timeSigMap.push({ ...t, measureIndex: t.measureIndex + off });
+    }
+    for (const t of p.tempoMap) if (t.measureIndex > 0) out.tempoMap.push({ ...t, measureIndex: t.measureIndex + off });
+    out.chordSymbols.push(...p.chordSymbols);
+    out.dynamics.push(...p.dynamics);
+    out.provenance.unverifiedEventIds.push(...p.provenance.unverifiedEventIds);
+  }
+  out.measures.forEach((m, i) => (m.number = m.pickup && i === 0 ? '0' : String(first.measures[0]?.pickup ? i : i + 1)));
+  out.revision++;
+  return out;
+}
+
+/** MusicXML có in số chỉ nhịp ở ô đầu tiên không (để biết trang sau có tự mang số chỉ nhịp) */
+export function hasExplicitTime(xml: string): boolean {
+  const firstMeasure = /<measure\b[\s\S]*?<\/measure>/.exec(xml)?.[0] ?? '';
+  return /<time[\s>]/.test(firstMeasure);
 }
