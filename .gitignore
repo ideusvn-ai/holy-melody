@@ -1,0 +1,9 @@
+node_modules/
+dist/
+target/
+.env
+backend/.env
+scripts/preview/dist/
+scripts/preview/*.png
+*.log
+.DS_Store

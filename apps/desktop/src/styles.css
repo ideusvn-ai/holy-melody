@@ -1,0 +1,108 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  --bg: #f6f5f2;
+  --surface: #ffffff;
+  --surface-2: #f0eee9;
+  --line: #e3e0d8;
+  --text: #1c1b19;
+  --muted: #6d6a63;
+  --accent: #8a5a19;          /* vàng đồng – gợi không khí thánh ca */
+  --accent-soft: #f4e8d4;
+  --accent-text: #ffffff;
+  --play: #1f7a5a;
+  --warn: #b4531a;
+  --info: #2f5fa7;
+  --paper: #fffdf8;
+  --ink: #1d1c1a;
+  --hl: #d97706;
+  --sel: #2f5fa7;
+  --radius: 10px;
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: #121212;
+  --surface: #1b1b1c;
+  --surface-2: #242426;
+  --line: #333336;
+  --text: #ecebe8;
+  --muted: #9c9a94;
+  --accent: #d9a55a;
+  --accent-soft: #3a2e1d;
+  --accent-text: #1b1406;
+  --play: #3fbf8f;
+  --warn: #f08c4a;
+  --info: #7aa7f0;
+  --paper: #f8f6f0;
+  --ink: #1d1c1a;
+  --hl: #d97706;
+  --sel: #2f5fa7;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-fg: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-fg: var(--accent-text);
+  --color-play: var(--play);
+  --color-warn: var(--warn);
+  --color-info: var(--info);
+  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-music: "Bravura Text", "Noto Music", "Segoe UI Symbol", "Apple Symbols", serif;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+input, textarea, select { user-select: text; }
+
+/* ---- bản nhạc */
+.hm-paper { background: var(--paper); color: var(--ink); }
+.hm-note { cursor: pointer; transition: fill 60ms linear; }
+.hm-note:hover .hm-head { fill: var(--info); }
+.hm-note.hm-playing .hm-head, .hm-note.hm-playing .hm-stem { fill: var(--hl); stroke: var(--hl); }
+.hm-note.hm-selected .hm-head { fill: var(--sel); }
+.hm-note.hm-flagged .hm-head { fill: var(--warn); }
+.hm-measure-bg { fill: transparent; cursor: crosshair; }
+.hm-measure-bg:hover { fill: rgb(47 95 167 / 0.05); }
+.hm-measure-bg.hm-selected { fill: rgb(47 95 167 / 0.12); }
+.hm-cursor { transition: transform 40ms linear; }
+
+/* ---- chuyển động */
+@keyframes hm-fade-up { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes hm-pulse { 0%, 100% { transform: scaleY(0.35); } 50% { transform: scaleY(1); } }
+@keyframes hm-shimmer { from { background-position: -200px 0; } to { background-position: 200px 0; } }
+.hm-enter { animation: hm-fade-up 180ms ease-out both; }
+.hm-eq span { display: inline-block; width: 2px; height: 10px; margin: 0 1px; background: currentColor; transform-origin: bottom; animation: hm-pulse 900ms ease-in-out infinite; }
+.hm-eq span:nth-child(2) { animation-delay: 150ms; }
+.hm-eq span:nth-child(3) { animation-delay: 300ms; }
+.hm-skeleton { background: linear-gradient(90deg, var(--surface-2) 0, var(--line) 50%, var(--surface-2) 100%); background-size: 400px 100%; animation: hm-shimmer 1.2s linear infinite; }
+
+[data-reduced-motion="true"] *, [data-reduced-motion="true"] *::before, [data-reduced-motion="true"] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 10px; border: 2px solid transparent; background-clip: padding-box; }
+:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }

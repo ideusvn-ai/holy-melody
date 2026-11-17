@@ -1,0 +1,77 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Holy Melody",
+  "version": "0.1.0",
+  "identifier": "app.holymelody.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Holy Melody",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://api.holymelody.app ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "dmg",
+      "app",
+      "msi",
+      "nsis"
+    ],
+    "category": "Music",
+    "shortDescription": "Đọc bản nhạc. Soạn nhạc. Biến giai điệu thành tiếng hát.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": [
+          "holymelody"
+        ],
+        "name": "Holy Melody Project",
+        "role": "Editor"
+      },
+      {
+        "ext": [
+          "musicxml",
+          "mxl"
+        ],
+        "name": "MusicXML",
+        "role": "Editor"
+      },
+      {
+        "ext": [
+          "mid",
+          "midi"
+        ],
+        "name": "MIDI",
+        "role": "Viewer"
+      }
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      }
+    }
+  }
+}

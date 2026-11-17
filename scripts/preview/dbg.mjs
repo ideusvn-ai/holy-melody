@@ -1,0 +1,12 @@
+import { chromium } from '/opt/npm-tools/node_modules/playwright/index.mjs';
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+page.on('pageerror', (e) => console.log('PAGEERROR', e.message, e.stack?.split('\n').slice(0,4).join(' | ')));
+page.on('console', (m) => m.type() === 'error' && console.log('CONSOLE', m.text().slice(0,300)));
+await page.goto('http://localhost:8765/');
+await page.setInputFiles('input[type=file]', process.argv[2]);
+await page.waitForTimeout(500);
+await page.click('role=tab[name="SCORE EDITOR"]');
+await page.waitForTimeout(800);
+console.log('notes', await page.locator('.hm-note').count());
+await browser.close();

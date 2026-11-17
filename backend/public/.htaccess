@@ -1,0 +1,11 @@
+# Apache / shared hosting: chuyển mọi request /api/* về index.php, bắt buộc HTTPS
+RewriteEngine On
+RewriteCond %{HTTPS} !=on
+RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^ index.php [QSA,L]
+Options -Indexes
+<FilesMatch "\.(env|sql|md|log)$">
+  Require all denied
+</FilesMatch>

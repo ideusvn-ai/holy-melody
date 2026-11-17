@@ -1,0 +1,83 @@
+name: desktop
+
+# Chạy khi đẩy tag dạng v0.1.0, hoặc bấm "Run workflow" trong tab Actions
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: shivammathur/setup-php@v2
+        with: { php-version: '8.3', extensions: mysqli, openssl }
+      - run: npm install
+      - name: Test lõi âm nhạc + dàn trang
+        run: npm test
+      - name: Test backend PHP
+        run: php backend/tests/run.php
+      - name: Kiểm tra kiểu TypeScript của giao diện (chỉ báo, không chặn build)
+        run: npm run typecheck -w @holy-melody/desktop
+        continue-on-error: true
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Cả hai bản macOS build trên máy chip Apple (macos-latest); bản Intel được biên dịch chéo
+          - { name: macos-apple-silicon, os: macos-latest, target: aarch64-apple-darwin }
+          - { name: macos-intel, os: macos-latest, target: x86_64-apple-darwin }
+          - { name: windows-x64, os: windows-latest, target: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: '${{ matrix.target }}' }
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: 'apps/desktop/src-tauri -> target' }
+      - run: npm install
+      - name: Tạo bộ icon
+        run: npm run icons
+
+      # Chỉ bật ký mã khi đã khai báo secrets; không có thì build bản CHƯA KÝ
+      - name: Cấu hình ký mã macOS (nếu có)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$APPLE_CERTIFICATE" ]; then
+            for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+              { echo "$v<<__EOF__"; printenv "$v"; echo "__EOF__"; } >> "$GITHUB_ENV"
+            done
+            echo "Sẽ ký và notarize bản macOS."
+          else
+            echo "::warning::Chưa có chứng chỉ Apple → bản .dmg CHƯA KÝ."
+          fi
+
+      - name: Build ứng dụng
+        shell: bash
+        run: npm run tauri -w @holy-melody/desktop -- build --target ${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: holy-melody-${{ matrix.name }}
+          path: |
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 14

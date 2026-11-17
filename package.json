@@ -1,0 +1,25 @@
+{
+  "name": "holy-melody",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "packages/*",
+    "apps/desktop"
+  ],
+  "scripts": {
+    "test": "npm run test -w @holy-melody/music-core && npm run test -w @holy-melody/score-renderer",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "desktop:dev": "npm run tauri dev -w @holy-melody/desktop",
+    "desktop:build": "npm run tauri build -w @holy-melody/desktop",
+    "backend:test": "php backend/tests/run.php",
+    "icons": "npx tauri icon apps/desktop/src-tauri/icons/app-icon.svg -o apps/desktop/src-tauri/icons"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0"
+  }
+}
