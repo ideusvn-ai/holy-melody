@@ -321,7 +321,7 @@ export async function convertToEdit(
 
   // 1. trừ credit (máy chủ, idempotent theo file gốc)
   onProgress({ phase: 'charge', done: 0, total: 1, text: 'Xác nhận 10 credit với máy chủ…' });
-  const conv = sheet.conversion ?? (await charge().then((c) => ({ at: c.created_at, credits: c.credits, transactionId: c.transaction_id ?? undefined })));
+  const conv: NonNullable<SheetSource['conversion']> = sheet.conversion ?? (await charge().then((c) => ({ at: c.created_at, credits: c.credits, transactionId: c.transaction_id ?? undefined })));
 
   // 2. Music Rule Validator + tự sửa an toàn
   onProgress({ phase: 'validate', done: 0, total: 1, text: 'Kiểm tra quy tắc âm nhạc…' });
