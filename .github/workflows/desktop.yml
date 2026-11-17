@@ -40,6 +40,8 @@ jobs:
       - run: scripts/ci/step.sh typecheck-ui npm run typecheck -w @holy-melody/desktop
         continue-on-error: true
       - run: scripts/ci/step.sh icons npm run icons
+      - run: scripts/ci/step.sh soundfont npm run soundfont
+        env: { GITHUB_TOKEN: '${{ github.token }}' }
       - run: scripts/ci/step.sh vite-build npm run build -w @holy-melody/desktop
       - run: scripts/ci/step.sh cargo-check bash -c "cd apps/desktop/src-tauri && cargo check --locked || cargo check"
       - run: scripts/ci/step.sh cargo-test bash -c "cd apps/desktop/src-tauri && cargo test"
@@ -71,6 +73,9 @@ jobs:
         run: scripts/ci/step.sh npm-install npm install --no-audit --no-fund
       - shell: bash
         run: scripts/ci/step.sh icons npm run icons
+      - shell: bash
+        run: scripts/ci/step.sh soundfont npm run soundfont
+        env: { GITHUB_TOKEN: '${{ github.token }}' }
       - name: Cấu hình ký mã macOS (nếu có)
         if: runner.os == 'macOS'
         shell: bash

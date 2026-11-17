@@ -4,7 +4,8 @@
  */
 import { useEffect, useMemo, useRef, useState, type MouseEvent as RMouseEvent } from 'react';
 import { HighlightIndex, measureAtTick } from '@holy-melody/music-core';
-import { layoutScore, type EventBox } from '@holy-melody/score-renderer';
+import { layoutScore, type EventBox, type ScoreLayout } from '@holy-melody/score-renderer';
+import type { ScoreDocument } from '@holy-melody/music-core';
 import { useActiveProject, useStore } from '../state/store';
 import { playbackPosition, usePlayback } from '../state/playback';
 
@@ -147,79 +148,116 @@ export function ScoreView({ editable = false, flaggedNoteIds = [] }: Props) {
           aria-label={`Bản nhạc ${project.score.meta.title}`}
           onClick={() => select({ noteIds: [], eventIds: [], measureRange: undefined })}
         >
-          {project.score.meta.title && (
-            <g>
-              <text x={layout.width / 2} y={layout.marginX * 0.6 + 26} textAnchor="middle" fontSize={22} fontWeight={600} fill="currentColor" fontFamily="Georgia, 'Times New Roman', serif">{project.score.meta.title}</text>
-              {project.score.meta.composer && <text x={layout.width - layout.marginX} y={layout.marginX * 0.6 + 56} textAnchor="end" fontSize={11} fill="currentColor">{project.score.meta.composer}</text>}
-            </g>
-          )}
-          {layout.systems.map((sys) => (
-            <g key={sys.index}>
-              {/* nền ô nhịp để chọn */}
-              {sys.measures.map((mb) => (
-                <rect
-                  key={mb.measureId}
-                  className={`hm-measure-bg ${mb.index >= selFrom && mb.index <= selTo ? 'hm-selected' : ''}`}
-                  x={mb.x} y={sys.y - sp * 2} width={mb.width} height={sys.height + sp * 4}
-                  onMouseDown={(e) => onMeasureDown(e, mb.index)}
-                  onMouseEnter={() => onMeasureEnter(mb.index)}
-                  onClick={(e) => e.stopPropagation()}
-                />
-              ))}
-              {sys.staves.map((st, si) => {
-                const x0 = layout.marginX;
-                const x1 = sys.measures[sys.measures.length - 1]!.x + sys.measures[sys.measures.length - 1]!.width;
-                return (
-                  <g key={si} pointerEvents="none">
-                    {[0, 1, 2, 3, 4].map((l) => <line key={l} x1={x0} x2={x1} y1={st.y + l * sp} y2={st.y + l * sp} stroke="currentColor" strokeWidth={0.8} />)}
-                    <text x={x0 + 4} y={st.y + (st.clef.sign === 'F' ? sp * 1.1 : sp * 3)} fontSize={st.clef.sign === 'F' ? sp * 3.4 : sp * 4.6} fontFamily="var(--font-music)" fill="currentColor">
-                      {st.clef.sign === 'F' ? '𝄢' : st.clef.sign === 'C' ? '𝄡' : '𝄞'}
-                    </text>
-                    {st.clef.octaveChange === -1 && <text x={x0 + sp * 1.3} y={st.y + sp * 6.3} fontSize={9} fill="currentColor" fontStyle="italic">8</text>}
-                    <KeySig x={x0 + sp * 3.6} y={st.y} sp={sp} fifths={sys.keyFifths} clef={st.clef.sign} />
-                    {sys.timeSig && (
-                      <g fontSize={sp * 2.4} fontWeight={700} fontFamily="Georgia, serif" textAnchor="middle" fill="currentColor">
-                        <text x={x0 + sp * 4.6 + Math.abs(sys.keyFifths) * sp * 1.1} y={st.y + sp * 1.9}>{sys.timeSig.beats}</text>
-                        <text x={x0 + sp * 4.6 + Math.abs(sys.keyFifths) * sp * 1.1} y={st.y + sp * 3.9}>{sys.timeSig.beatType}</text>
-                      </g>
-                    )}
-                    {sys.measures.map((mb) => {
-                      const m = project.score.measures[mb.index]!;
-                      const xr = mb.x + mb.width;
-                      return (
-                        <g key={mb.measureId}>
-                          {si === 0 && <text x={mb.x + 2} y={st.y - sp * 0.8} fontSize={9} fill="var(--muted)">{m.number}</text>}
-                          {m.repeatStart && <RepeatDots x={mb.x + 6} y={st.y} sp={sp} />}
-                          {m.repeatEnd && <RepeatDots x={xr - 8} y={st.y} sp={sp} />}
-                          <line x1={xr} x2={xr} y1={st.y} y2={st.y + staffH} stroke="currentColor" strokeWidth={m.barlineRight === 'final' || m.repeatEnd ? 1 : 0.9} />
-                          {(m.barlineRight === 'final' || m.repeatEnd) && <rect x={xr - 4} y={st.y} width={3.2} height={staffH} fill="currentColor" />}
-                          {m.barlineRight === 'double' && <line x1={xr - 3} x2={xr - 3} y1={st.y} y2={st.y + staffH} stroke="currentColor" />}
-                          {si === 0 && m.volta && (
-                            <g>
-                              <path d={`M${mb.x + 2} ${st.y - sp * 2} V${st.y - sp * 3.4} H${xr - 4}`} stroke="currentColor" fill="none" strokeWidth={0.9} />
-                              <text x={mb.x + 5} y={st.y - sp * 2.3} fontSize={10}>{m.volta.numbers.join(', ')}.</text>
-                            </g>
-                          )}
-                        </g>
-                      );
-                    })}
-                  </g>
-                );
-              })}
-              {sys.staves.length > 1 && <line x1={layout.marginX} x2={layout.marginX} y1={sys.y} y2={sys.y + sys.height} stroke="currentColor" strokeWidth={1.2} />}
-            </g>
-          ))}
-          {layout.chordSymbols.map((c) => (
-            <text key={c.id} x={c.x} y={c.y} fontSize={12} fontWeight={600} fill={preview ? 'var(--info)' : 'currentColor'} fontFamily="Georgia, serif">{c.text}</text>
-          ))}
-          <Decorations layout={layout} />
-          {layout.events.map((ev) => (
-            <EventGlyph key={ev.event.id} box={ev} sp={sp} lyric={layout.lyricStyle} selNotes={selNotes} flagged={flagged} onNoteClick={onNoteClick} />
-          ))}
+          <ScoreSvgBody
+            layout={layout}
+            score={project.score}
+            selNotes={selNotes}
+            flagged={flagged}
+            selRange={[selFrom, selTo]}
+            previewChords={!!preview}
+            onNoteClick={onNoteClick}
+            onMeasureDown={onMeasureDown}
+            onMeasureEnter={onMeasureEnter}
+          />
           <rect ref={cursorRef} className="hm-cursor" x={0} y={0} width={2} height={0} fill="var(--hl)" opacity={0} pointerEvents="none" rx={1} />
         </svg>
       </div>
     </div>
+  );
+}
+
+export interface ScoreSvgBodyProps {
+  layout: ScoreLayout;
+  score: ScoreDocument;
+  selNotes?: Set<string>;
+  flagged?: Set<string>;
+  selRange?: [number, number];
+  previewChords?: boolean;
+  onNoteClick?: (e: RMouseEvent, noteId: string, eventId: string) => void;
+  onMeasureDown?: (e: RMouseEvent, index: number) => void;
+  onMeasureEnter?: (index: number) => void;
+}
+
+/** Phần thân SVG của bản nhạc – dùng chung cho màn hình, trang in/PDF và xuất SVG/PNG */
+export function ScoreSvgBody({
+  layout, score, selNotes = new Set(), flagged = new Set(), selRange = [-1, -2], previewChords = false,
+  onNoteClick = () => {}, onMeasureDown = () => {}, onMeasureEnter = () => {},
+}: ScoreSvgBodyProps) {
+  const { sp } = layout;
+  const staffH = sp * 4;
+  const [selFrom, selTo] = selRange;
+  return (
+    <>
+      {score.meta.title && (
+        <g>
+          <text x={layout.width / 2} y={layout.marginX * 0.6 + 26} textAnchor="middle" fontSize={22} fontWeight={600} fill="currentColor" fontFamily="Georgia, 'Times New Roman', serif">{score.meta.title}</text>
+          {score.meta.composer && <text x={layout.width - layout.marginX} y={layout.marginX * 0.6 + 56} textAnchor="end" fontSize={11} fill="currentColor">{score.meta.composer}</text>}
+        </g>
+      )}
+      {layout.systems.map((sys) => (
+        <g key={sys.index}>
+          {/* nền ô nhịp để chọn */}
+          {sys.measures.map((mb) => (
+            <rect
+              key={mb.measureId}
+              className={`hm-measure-bg ${mb.index >= selFrom && mb.index <= selTo ? 'hm-selected' : ''}`}
+              x={mb.x} y={sys.y - sp * 2} width={mb.width} height={sys.height + sp * 4}
+              onMouseDown={(e) => onMeasureDown(e, mb.index)}
+              onMouseEnter={() => onMeasureEnter(mb.index)}
+              onClick={(e) => e.stopPropagation()}
+            />
+          ))}
+          {sys.staves.map((st, si) => {
+            const x0 = layout.marginX;
+            const x1 = sys.measures[sys.measures.length - 1]!.x + sys.measures[sys.measures.length - 1]!.width;
+            return (
+              <g key={si} pointerEvents="none">
+                {[0, 1, 2, 3, 4].map((l) => <line key={l} x1={x0} x2={x1} y1={st.y + l * sp} y2={st.y + l * sp} stroke="currentColor" strokeWidth={0.8} />)}
+                <text x={x0 + 4} y={st.y + (st.clef.sign === 'F' ? sp * 1.1 : sp * 3)} fontSize={st.clef.sign === 'F' ? sp * 3.4 : sp * 4.6} fontFamily="var(--font-music)" fill="currentColor">
+                  {st.clef.sign === 'F' ? '𝄢' : st.clef.sign === 'C' ? '𝄡' : '𝄞'}
+                </text>
+                {st.clef.octaveChange === -1 && <text x={x0 + sp * 1.3} y={st.y + sp * 6.3} fontSize={9} fill="currentColor" fontStyle="italic">8</text>}
+                <KeySig x={x0 + sp * 3.6} y={st.y} sp={sp} fifths={sys.keyFifths} clef={st.clef.sign} />
+                {sys.timeSig && (
+                  <g fontSize={sp * 2.4} fontWeight={700} fontFamily="Georgia, serif" textAnchor="middle" fill="currentColor">
+                    <text x={x0 + sp * 4.6 + Math.abs(sys.keyFifths) * sp * 1.1} y={st.y + sp * 1.9}>{sys.timeSig.beats}</text>
+                    <text x={x0 + sp * 4.6 + Math.abs(sys.keyFifths) * sp * 1.1} y={st.y + sp * 3.9}>{sys.timeSig.beatType}</text>
+                  </g>
+                )}
+                {sys.measures.map((mb) => {
+                  const m = score.measures[mb.index]!;
+                  const xr = mb.x + mb.width;
+                  return (
+                    <g key={mb.measureId}>
+                      {si === 0 && <text x={mb.x + 2} y={st.y - sp * 0.8} fontSize={9} fill="var(--muted)">{m.number}</text>}
+                      {m.repeatStart && <RepeatDots x={mb.x + 6} y={st.y} sp={sp} />}
+                      {m.repeatEnd && <RepeatDots x={xr - 8} y={st.y} sp={sp} />}
+                      <line x1={xr} x2={xr} y1={st.y} y2={st.y + staffH} stroke="currentColor" strokeWidth={m.barlineRight === 'final' || m.repeatEnd ? 1 : 0.9} />
+                      {(m.barlineRight === 'final' || m.repeatEnd) && <rect x={xr - 4} y={st.y} width={3.2} height={staffH} fill="currentColor" />}
+                      {m.barlineRight === 'double' && <line x1={xr - 3} x2={xr - 3} y1={st.y} y2={st.y + staffH} stroke="currentColor" />}
+                      {si === 0 && m.volta && (
+                        <g>
+                          <path d={`M${mb.x + 2} ${st.y - sp * 2} V${st.y - sp * 3.4} H${xr - 4}`} stroke="currentColor" fill="none" strokeWidth={0.9} />
+                          <text x={mb.x + 5} y={st.y - sp * 2.3} fontSize={10}>{m.volta.numbers.join(', ')}.</text>
+                        </g>
+                      )}
+                    </g>
+                  );
+                })}
+              </g>
+            );
+          })}
+          {sys.staves.length > 1 && <line x1={layout.marginX} x2={layout.marginX} y1={sys.y} y2={sys.y + sys.height} stroke="currentColor" strokeWidth={1.2} />}
+        </g>
+      ))}
+      {layout.chordSymbols.map((c) => (
+        <text key={c.id} x={c.x} y={c.y} fontSize={12} fontWeight={600} fill={previewChords ? 'var(--info)' : 'currentColor'} fontFamily="Georgia, serif">{c.text}</text>
+      ))}
+      <Decorations layout={layout} />
+      {layout.events.map((ev) => (
+        <EventGlyph key={ev.event.id} box={ev} sp={sp} lyric={layout.lyricStyle} selNotes={selNotes} flagged={flagged} onNoteClick={onNoteClick} />
+      ))}
+    </>
   );
 }
 

@@ -2,7 +2,7 @@
  * Kết nối engine phát nhạc với store. Vị trí phát luôn lấy từ audio clock của engine.
  */
 import { create } from 'zustand';
-import { WebAudioEngine, type PlaybackEngine, type PlaybackStatus } from '@holy-melody/midi-engine';
+import { createBestEngine, WebAudioEngine, type PlaybackEngine, type PlaybackStatus } from '@holy-melody/midi-engine';
 import { measureAtTick, type PlaybackTimeline } from '@holy-melody/music-core';
 import { useStore } from './store';
 
@@ -34,7 +34,7 @@ interface PlaybackState {
   playSelection(loop?: boolean): void;
 }
 
-const engine: PlaybackEngine = new WebAudioEngine();
+let engine: PlaybackEngine = new WebAudioEngine();
 
 export const usePlayback = create<PlaybackState>((set, get) => ({
   engine,
@@ -142,7 +142,23 @@ function reload(tl: PlaybackTimeline | null) {
 useStore.subscribe((s, prev) => {
   if (s.timeline !== prev.timeline) reload(s.timeline);
 });
-engine.onEnded(() => usePlayback.setState({ status: engine.status(), range: null }));
+const onEnded = () => usePlayback.setState({ status: engine.status(), range: null });
+engine.onEnded(onEnded);
+
+// Trong app desktop: chuyển sang engine SoundFont (Rust) khi sẵn sàng, giữ nguyên các thiết lập
+void createBestEngine().then((best) => {
+  if (best === engine || best instanceof WebAudioEngine) return;
+  const st = usePlayback.getState();
+  engine.dispose();
+  engine = best;
+  engine.onEnded(onEnded);
+  engine.setSpeed(st.speed);
+  engine.setMetronome(st.metronome);
+  engine.setCountIn(st.countIn);
+  engine.setMasterVolume(st.volume);
+  usePlayback.setState({ engine });
+  reload(useStore.getState().timeline);
+});
 
 /** Đọc vị trí theo audio clock (gọi trong requestAnimationFrame) */
 export const playbackPosition = () => engine.position();

@@ -72,6 +72,9 @@
       "webviewInstallMode": {
         "type": "embedBootstrapper"
       }
-    }
+    },
+    "resources": [
+      "resources/*"
+    ]
   }
 }

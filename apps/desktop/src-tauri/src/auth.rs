@@ -40,7 +40,7 @@ mod tests {
     fn pkce_rfc7636_appendix_b() {
         let v = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         let c = URL_SAFE_NO_PAD.encode(Sha256::digest(v.as_bytes()));
-        assert_eq!(c, "E9Melhoa2OwvFrEMTJguCQaoWBDoy6TU3B1XYYLFSFg");
+        assert_eq!(c, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
     }
 
     #[test]

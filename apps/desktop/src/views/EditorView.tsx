@@ -3,7 +3,7 @@ import {
   addChordTone, addGraceNote, addInterval, addTriad, buildTimeline, chord, deleteEvent, deleteMeasure, insertMeasure, keyAlterFor, keyAt,
   makeTuplet, pitchToMidi, replaceEvent, ScoreIndex, setBarline, setDuration, setDynamic, setKeySignature, setLyric, setPitch,
   setTimeSignature, timeSigAt, toggleArticulation, toggleOrnament, toggleRepeat, toggleSlur, toggleTie, transpose, transposePitch,
-  type DurationType, type Step,
+  type DurationType, type NoteLocation, type Step,
 } from '@holy-melody/music-core';
 import { HarmonyPanel } from '../components/HarmonyPanel';
 import { LyricsPanel } from '../components/LyricsPanel';
@@ -43,7 +43,7 @@ export function EditorLeft() {
   if (!project) return null;
   const ev = loc?.event;
   const chordEv = ev?.kind === 'chord' ? ev : undefined;
-  const noteLoc = loc && 'note' in loc ? loc : undefined;
+  const noteLoc = loc && 'note' in loc ? (loc as NoteLocation) : undefined;
   const mIndex = sel.measureRange?.[0] ?? loc?.measureIndex;
   const measure = mIndex !== undefined ? project.score.measures[mIndex] : undefined;
   const key = keyAt(project.score, mIndex ?? 0);

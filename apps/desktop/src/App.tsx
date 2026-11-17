@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useActiveProject, useStore, type MainTab } from './state/store';
 import { usePlayback } from './state/playback';
 import { exportMidiFile, exportMusicXmlFile, importFile, saveProject } from './lib/fileio';
+import { exportMxlFile, exportPngFile, exportSvgFile, exportWavFile, printScore } from './lib/exporters';
 import { PlayerCenter, PlayerLeft, PlayerRight } from './views/PlayerView';
 import { EditorCenter, EditorLeft, EditorRight } from './views/EditorView';
 import { SingerCenter } from './views/SingerView';
@@ -79,6 +80,10 @@ export function App() {
     { id: 'save', label: 'Lưu dự án', hint: '⌘S', run: () => void save() },
     { id: 'xml', label: 'Export MusicXML', run: () => project && void exportMusicXmlFile(project.score) },
     { id: 'midi', label: 'Export MIDI', run: () => project && void exportMidiFile(project.score) },
+    { id: 'mxl', label: 'Export MXL (MusicXML nén)', run: () => project && void exportMxlFile(project.score) },
+    { id: 'pdf', label: 'In / Lưu PDF', hint: '⌘P', run: () => project && void printScore(project.score) },
+    { id: 'png', label: 'Export PNG', run: () => project && void exportPngFile(project.score, 0) },
+    { id: 'wav', label: 'Export WAV', run: () => project && void exportWavFile(project.score, project.score.playback.mixer).catch((e) => st.notify(String(e.message ?? e), 'error')) },
     { id: 'undo', label: 'Hoàn tác', hint: '⌘Z', run: () => st.undo() },
     { id: 'redo', label: 'Làm lại', hint: '⇧⌘Z', run: () => st.redo() },
     { id: 'play', label: 'Phát / Tạm dừng', hint: 'Space', run: () => usePlayback.getState().toggle() },
@@ -105,6 +110,7 @@ export function App() {
       if (mod && k === 's') { e.preventDefault(); void save(); return; }
       if (mod && k === 'o') { e.preventDefault(); fileInput.current?.click(); return; }
       if (mod && k === 'n') { e.preventDefault(); st.newProject(); return; }
+      if (mod && k === 'p' && project) { e.preventDefault(); void printScore(project.score); return; }
       if (mod && ['1', '2', '3'].includes(k)) { e.preventDefault(); st.setTab(TABS[Number(k) - 1]!.id); return; }
       if (inField) return;
       if (k === ' ') { e.preventDefault(); usePlayback.getState().toggle(); return; }
@@ -246,8 +252,18 @@ function ExportMenu() {
         <div className="absolute z-30 top-9 left-0 w-56 rounded-lg border border-line bg-surface shadow-lg py-1 hm-enter text-[12px]" onMouseLeave={() => setOpen(false)}>
           <button className={item} onClick={() => { void exportMusicXmlFile(project.score); setOpen(false); }}>MusicXML (.musicxml)</button>
           <button className={item} onClick={() => { void exportMidiFile(project.score); setOpen(false); }}>MIDI (.mid)</button>
-          <button className={item} onClick={() => { notify('Xuất PDF/PNG/SVG cần renderer Verovio (Phase 2–3).'); setOpen(false); }}>PDF · PNG · SVG <span className="text-muted">(Phase 3)</span></button>
-          <button className={item} onClick={() => { notify('Xuất WAV/MP3 cần engine âm thanh Rust (Phase 2).'); setOpen(false); }}>WAV · MP3 <span className="text-muted">(Phase 2)</span></button>
+          <button className={item} onClick={() => { void exportMxlFile(project.score); setOpen(false); }}>MusicXML nén (.mxl)</button>
+          <div className="my-1 border-t border-line" />
+          <button className={item} onClick={() => { void printScore(project.score); setOpen(false); }}>In / Lưu PDF… <span className="text-muted">(⌘P)</span></button>
+          <button className={item} onClick={() => { void exportSvgFile(project.score, 0).catch((e) => notify(String(e.message ?? e), 'error')); setOpen(false); }}>SVG (trang 1)</button>
+          <button className={item} onClick={() => { void exportPngFile(project.score, 0).catch((e) => notify(String(e.message ?? e), 'error')); setOpen(false); }}>PNG 300 dpi (trang 1)</button>
+          <div className="my-1 border-t border-line" />
+          <button className={item} onClick={() => {
+            setOpen(false);
+            exportWavFile(project.score, project.score.playback.mixer)
+              .then((p) => p && notify(`Đã xuất ${p}`))
+              .catch((e) => notify(String(e.message ?? e), 'error'));
+          }}>Âm thanh WAV</button>
         </div>
       )}
     </div>

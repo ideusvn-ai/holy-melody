@@ -330,22 +330,167 @@ export class WebAudioEngine implements PlaybackEngine {
   }
 }
 
-// ====================================================================== Tauri (Phase 2)
+// ====================================================================== Tauri (rustysynth + cpal)
+
+type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+
+interface NativeStatus {
+  tick: number;
+  playing: boolean;
+  ended: boolean;
+  countingIn: boolean;
+  outputLatencyMs: number;
+  sampleRate: number;
+}
 
 /**
- * Engine native qua Tauri IPC. Lệnh Rust `playback_*` thuộc Phase 2; hiện ném lỗi rõ ràng
- * để UI tự chuyển sang WebAudioEngine thay vì giả lập thành công.
+ * Engine native: âm thanh SoundFont render trên audio thread Rust.
+ * Vị trí lấy từ audio clock của Rust (thăm dò ~60 lần/giây) và nội suy bằng performance.now()
+ * giữa hai lần thăm dò để con trỏ mượt; luôn hiệu chỉnh lại theo giá trị thật.
  */
-export async function createBestEngine(): Promise<PlaybackEngine> {
-  const tauri = (globalThis as unknown as { __TAURI_INTERNALS__?: { invoke: (cmd: string, args?: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
-  if (tauri) {
+export class TauriEngine implements PlaybackEngine {
+  readonly name = 'SoundFont (GeneralUser GS)';
+  private tl: PlaybackTimeline | undefined;
+  private last: NativeStatus = { tick: 0, playing: false, ended: false, countingIn: false, outputLatencyMs: 0, sampleRate: 44100 };
+  private lastAt = 0;
+  private speed = 1;
+  private timer: ReturnType<typeof setInterval> | undefined;
+  private endedFns = new Set<() => void>();
+  private partChannel = new Map<string, number>();
+  private partProgram = new Map<string, number>();
+
+  constructor(private readonly invoke: Invoke) {
+    this.timer = setInterval(() => void this.poll(), 16);
+  }
+
+  private async poll() {
     try {
-      const ok = await tauri.invoke('playback_engine_available');
-      if (ok === true) {
-        // Phase 2: return new TauriEngine(tauri.invoke)
-      }
+      const st = (await this.invoke('playback_status')) as NativeStatus;
+      const wasPlaying = this.last.playing;
+      this.last = st;
+      this.lastAt = performance.now();
+      if (wasPlaying && st.ended) for (const f of this.endedFns) f();
     } catch {
-      /* lệnh chưa có → dùng WebAudio */
+      /* engine tạm thời bận */
+    }
+  }
+
+  private call(cmd: string, args?: Record<string, unknown>) {
+    void this.invoke(cmd, args).catch((e) => console.error(`[engine] ${cmd}:`, e));
+  }
+
+  load(tl: PlaybackTimeline): void {
+    this.tl = tl;
+    this.partChannel = new Map(tl.parts.map((p) => [p.partId, p.channel]));
+    this.partProgram = new Map(tl.parts.map((p) => [p.partId, p.program]));
+    // lưới phách cho metronome / count-in
+    const beats: { tick: number; downbeat: boolean }[] = [];
+    for (const m of tl.measures) {
+      let ts = tl.timeSigs[0] ?? { tick: 0, beats: 4, beatType: 4 };
+      for (const t of tl.timeSigs) if (t.tick <= m.startTick) ts = t;
+      const compound = ts.beatType === 8 && ts.beats % 3 === 0 && ts.beats > 3;
+      const beat = ((tl.ticksPerQuarter * 4) / ts.beatType) * (compound ? 3 : 1);
+      for (let t = m.startTick, k = 0; t < m.endTick; t += beat, k++) beats.push({ tick: Math.round(t), downbeat: k === 0 });
+    }
+    this.call('playback_load', {
+      args: {
+        ticksPerQuarter: tl.ticksPerQuarter,
+        totalTicks: tl.totalTicks,
+        notes: tl.notes.map((n) => ({ tick: n.tick, durationTicks: n.durationTicks, channel: n.channel, program: n.program, pitch: n.pitch, velocity: n.velocity })),
+        tempo: tl.tempo,
+        beats,
+      },
+    });
+  }
+
+  async play(fromTick?: number): Promise<void> {
+    await this.invoke('playback_play', { from: fromTick ?? null });
+    this.last = { ...this.last, playing: true, ended: false, tick: fromTick ?? this.last.tick };
+    this.lastAt = performance.now();
+  }
+  pause(): void {
+    this.call('playback_pause');
+    this.last = { ...this.last, playing: false, tick: this.position() };
+  }
+  stop(): void {
+    this.call('playback_stop');
+    this.last = { ...this.last, playing: false, tick: 0 };
+  }
+  seek(tick: number): void {
+    this.call('playback_seek', { tick });
+    this.last = { ...this.last, tick };
+    this.lastAt = performance.now();
+  }
+  position(): number {
+    const st = this.last;
+    if (!st.playing || st.countingIn || !this.tl) return st.tick;
+    // nội suy theo tempo hiện tại, trừ độ trễ đầu ra
+    let bpm = this.tl.tempo[0]?.bpm ?? 100;
+    for (const t of this.tl.tempo) if (t.tick <= st.tick) bpm = t.bpm;
+    const tps = (bpm / 60) * this.tl.ticksPerQuarter * this.speed;
+    const elapsed = (performance.now() - this.lastAt - st.outputLatencyMs) / 1000;
+    return Math.max(0, st.tick + tps * Math.min(0.1, elapsed));
+  }
+  status(): PlaybackStatus {
+    return this.last.playing ? 'playing' : this.last.tick > 0 && !this.last.ended ? 'paused' : 'stopped';
+  }
+  setSpeed(speed: number): void {
+    this.speed = Math.min(4, Math.max(0.25, speed));
+    this.call('playback_set_speed', { speed: this.speed });
+  }
+  setLoop(range: [number, number] | null): void {
+    this.call('playback_set_loop', { from: range?.[0] ?? null, to: range?.[1] ?? null });
+  }
+  setMetronome(on: boolean): void {
+    this.call('playback_set_metronome', { on });
+  }
+  setCountIn(bars: number): void {
+    this.call('playback_set_count_in', { bars });
+  }
+  setMasterVolume(v: number): void {
+    this.call('playback_set_master', { volume: v });
+  }
+  setChannel(partId: string, state: Partial<ChannelState & { reverb: number; chorus: number }>): void {
+    const channel = this.partChannel.get(partId);
+    if (channel === undefined) return;
+    this.call('playback_set_channel', {
+      channel, volume: state.volume ?? null, pan: state.pan ?? null, reverb: state.reverb ?? null,
+      chorus: state.chorus ?? null, mute: state.mute ?? null, solo: state.solo ?? null,
+    });
+  }
+  previewNote(pitch: number, velocity = 90, durationMs = 450): void {
+    const program = [...this.partProgram.values()][0] ?? 0;
+    this.call('playback_preview', { pitch, velocity, ms: durationMs, program });
+  }
+  onEnded(fn: () => void): () => void {
+    this.endedFns.add(fn);
+    return () => this.endedFns.delete(fn);
+  }
+  dispose(): void {
+    if (this.timer) clearInterval(this.timer);
+    this.call('playback_stop');
+  }
+}
+
+export const tauriInvoke = (): Invoke | undefined =>
+  (globalThis as unknown as { __TAURI_INTERNALS__?: { invoke: Invoke } }).__TAURI_INTERNALS__?.invoke;
+
+/**
+ * Chọn engine tốt nhất: engine Rust (SoundFont) nếu chạy trong app và đã sẵn sàng,
+ * ngược lại dùng Web Audio. Engine Rust khởi động nền nên thử lại vài lần.
+ */
+export async function createBestEngine(retries = 20): Promise<PlaybackEngine> {
+  const invoke = tauriInvoke();
+  if (invoke) {
+    for (let i = 0; i < retries; i++) {
+      try {
+        if ((await invoke('playback_engine_available')) === true) return new TauriEngine(invoke);
+        const info = (await invoke('playback_engine_info')) as { error?: string };
+        if (info.error) break; // thiếu SoundFont / thiết bị: không chờ nữa
+      } catch {
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 250));
     }
   }
   return new WebAudioEngine();

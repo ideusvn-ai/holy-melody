@@ -2,7 +2,7 @@
  * Mở / lưu / xuất file. Trong Tauri dùng hộp thoại hệ thống + lệnh Rust ghi file;
  * ngoài Tauri (chạy thử trên trình duyệt) dùng tải xuống Blob.
  */
-import { exportMidi, exportMusicXml, importMidi, importMusicXml, type ScoreDocument } from '@holy-melody/music-core';
+import { exportMidi, exportMusicXml, importMidi, importMusicXml, importMxl, type ScoreDocument } from '@holy-melody/music-core';
 
 export type ImportKind = 'musicxml' | 'mxl' | 'midi' | 'project' | 'image' | 'pdf' | 'unknown';
 
@@ -39,7 +39,7 @@ export async function importFile(file: File): Promise<ImportOutcome> {
       return { score: s, warnings: [] };
     }
     case 'mxl':
-      throw new ImportNotSupportedError('MXL (MusicXML nén) sẽ được hỗ trợ ở Phase 3. Tạm thời hãy xuất MusicXML không nén.');
+      return { score: await importMxl(new Uint8Array(await file.arrayBuffer())), warnings: [] };
     case 'image':
     case 'pdf':
       throw new ImportNotSupportedError('Nhận dạng bản nhạc từ ảnh/PDF (OMR) thuộc Phase 4 và chưa được tích hợp trong bản này.');
@@ -49,10 +49,10 @@ export async function importFile(file: File): Promise<ImportOutcome> {
 }
 
 type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
-const tauriInvoke = (): Invoke | undefined =>
+export const tauriInvoke = (): Invoke | undefined =>
   (globalThis as unknown as { __TAURI_INTERNALS__?: { invoke: Invoke } }).__TAURI_INTERNALS__?.invoke;
 
-async function saveBytes(defaultName: string, bytes: Uint8Array, mime: string, filters: { name: string; extensions: string[] }[]): Promise<string | undefined> {
+export async function saveBytes(defaultName: string, bytes: Uint8Array, mime: string, filters: { name: string; extensions: string[] }[]): Promise<string | undefined> {
   const invoke = tauriInvoke();
   if (invoke) {
     const path = (await invoke('plugin:dialog|save', { options: { defaultPath: defaultName, filters } })) as string | null;

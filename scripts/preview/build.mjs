@@ -24,6 +24,7 @@ await build({
     '@holy-melody/music-core': join(root, 'packages/music-core/src/index.ts'),
     '@holy-melody/midi-engine': join(root, 'packages/midi-engine/src/index.ts'),
     '@holy-melody/score-renderer': join(root, 'packages/score-renderer/src/index.ts'),
+    'react-dom/server': '/opt/npm-tools/node_modules/react-dom/server.browser.js',
   },
   define: { 'process.env.NODE_ENV': '"production"' },
   minify: false,

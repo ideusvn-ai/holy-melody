@@ -14,3 +14,4 @@ export * from './advisor.js';
 export * from './harmony.js';
 export * from './notation.js';
 export * from './lyrics.js';
+export * from './mxl.js';
