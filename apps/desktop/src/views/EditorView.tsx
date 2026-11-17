@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   addChordTone, addGraceNote, addInterval, addTriad, buildTimeline, chord, deleteEvent, deleteMeasure, insertMeasure, keyAlterFor, keyAt,
-  makeTuplet, pitchToMidi, replaceEvent, ScoreIndex, setBarline, setDuration, setDynamic, setKeySignature, setLyric, setPitch,
+  makeTuplet, pitchToMidi, replaceEvent, spellMidi, ScoreIndex, setBarline, setDuration, setDynamic, setKeySignature, setLyric, setPitch,
   setTimeSignature, timeSigAt, toggleArticulation, toggleOrnament, toggleRepeat, toggleSlur, toggleTie, transpose, transposePitch,
   type DurationType, type NoteLocation, type Step,
 } from '@holy-melody/music-core';
 import { HarmonyPanel } from '../components/HarmonyPanel';
+import { useMidiInput } from '../lib/midiInput';
 import { LyricsPanel } from '../components/LyricsPanel';
 import { AdvisorPanel } from '../components/AdvisorPanel';
 import { ScoreView } from '../components/ScoreView';
@@ -179,12 +180,33 @@ export function EditorCenter() {
   const flagged = useMemo(() => suggestions.flatMap((x) => (x.severity !== 'info' ? x.noteIds : [])), [suggestions]);
   const setTab = useStore((s) => s.setTab);
   useEditorShortcuts();
+  useMidiStepInput();
   return (
     <div className="flex-1 flex flex-col min-h-0">
       <ScoreView editable flaggedNoteIds={flagged} />
       <Transport compact onOpenFull={() => setTab('player')} />
     </div>
   );
+}
+
+/** Nhập nốt step-time từ bàn phím MIDI: ghi vào event đang chọn rồi chuyển sang event kế tiếp */
+function useMidiStepInput() {
+  const project = useActiveProject();
+  useEffect(() => useMidiInput.getState().onChord((pitches) => {
+    const st = useStore.getState();
+    if (st.tab !== 'editor' || !project || !pitches.length) return;
+    const idx = new ScoreIndex(project.score);
+    const loc = st.selection.noteIds[0] ? idx.note(st.selection.noteIds[0]) : st.selection.eventIds[0] ? idx.event(st.selection.eventIds[0]) : undefined;
+    if (!loc) return;
+    const fifths = keyAt(project.score, loc.measureIndex).fifths;
+    const next = chord(pitches.map((p) => spellMidi(p, fifths)), loc.event.duration, { id: loc.event.id, staff: loc.event.staff, ...(loc.event.kind === 'chord' ? { lyrics: loc.event.lyrics } : {}) });
+    st.exec(replaceEvent(loc.event.id, next));
+    const order = buildOrder(project.score, loc.part.id, loc.voice.number);
+    const i = order.findIndex((x) => x.eventId === loc.event.id);
+    const nx = order[i + 1];
+    if (nx) st.select({ eventIds: [nx.eventId], noteIds: nx.noteId ? [nx.noteId] : [], measureRange: undefined });
+    else st.select({ eventIds: [next.id], noteIds: [next.notes[0]!.id] });
+  }), [project]);
 }
 
 function useEditorShortcuts() {

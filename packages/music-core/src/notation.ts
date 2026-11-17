@@ -287,3 +287,26 @@ export const setTempo = (measureIndex: number, bpm: number, text?: string): Comm
 });
 
 export { NotationError };
+
+// ====================================================================== xác minh kết quả OMR
+
+/** Đánh dấu các ô nhịp đã được người dùng kiểm tra (bỏ khỏi danh sách chưa xác minh) */
+export const verifyMeasures = (from: number, to: number): Command => ({
+  label: 'Xác minh nhận dạng',
+  scope: () => ALL,
+  apply: (s) => {
+    const ids = new Set<string>();
+    for (const part of s.parts) {
+      for (const m of s.measures.slice(from, to + 1)) {
+        for (const v of part.content[m.id] ?? []) for (const e of v.events) ids.add(e.id);
+      }
+    }
+    s.provenance.unverifiedEventIds = s.provenance.unverifiedEventIds.filter((id) => !ids.has(id));
+  },
+});
+
+/** Đánh dấu toàn bộ bản nhạc là chưa xác minh (sau OMR) */
+export function markAllUnverified(s: ScoreDocument): void {
+  s.provenance.source = 'omr';
+  s.provenance.unverifiedEventIds = s.parts.flatMap((p) => Object.values(p.content).flatMap((vs) => vs.flatMap((v) => v.events.map((e) => e.id))));
+}

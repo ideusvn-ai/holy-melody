@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useActiveProject, useStore, type MainTab } from './state/store';
 import { usePlayback } from './state/playback';
-import { exportMidiFile, exportMusicXmlFile, importFile, saveProject } from './lib/fileio';
+import { detectKind, exportMidiFile, exportMusicXmlFile, importFile, saveProject } from './lib/fileio';
+import { OmrDialog } from './components/OmrDialog';
+import { AccountMenu } from './components/AccountMenu';
+import { verifyMeasures } from '@holy-melody/music-core';
 import { exportMxlFile, exportPngFile, exportSvgFile, exportWavFile, printScore } from './lib/exporters';
 import { PlayerCenter, PlayerLeft, PlayerRight } from './views/PlayerView';
 import { EditorCenter, EditorLeft, EditorRight } from './views/EditorView';
 import { SingerCenter } from './views/SingerView';
 import { Transport } from './components/Transport';
 import {
-  IconCoin, IconExport, IconImport, IconLogo, IconMoon, IconNew, IconOpen, IconPanelLeft, IconPanelRight, IconRedo,
-  IconSave, IconSearch, IconSettings, IconSun, IconUndo, IconUser, IconX, IconZoomIn, IconZoomOut,
+  IconExport, IconImport, IconLogo, IconMoon, IconNew, IconOpen, IconPanelLeft, IconPanelRight, IconRedo,
+  IconSave, IconSearch, IconSettings, IconSun, IconUndo, IconX, IconZoomIn, IconZoomOut,
 } from './components/icons';
 
 const TABS: { id: MainTab; label: string }[] = [
@@ -51,8 +54,14 @@ export function App() {
     if (useStore.getState().projects.length === 0) useStore.getState().newProject();
   }, []);
 
+  const [omrFile, setOmrFile] = useState<File | null>(null);
   const openFiles = async (files: FileList | File[]) => {
     for (const f of Array.from(files)) {
+      const kind = detectKind(f.name);
+      if (kind === 'image' || kind === 'pdf') {
+        setOmrFile(f);
+        continue;
+      }
       try {
         const r = await importFile(f);
         st.newProject(r.score, f.name);
@@ -164,15 +173,7 @@ export function App() {
         </button>
         <button className={ib} title="Cài đặt" onClick={() => st.setPalette(true)}><IconSettings /></button>
         <div className="w-px h-5 bg-line mx-1" />
-        <div className="flex items-center gap-1.5 px-2 h-8 rounded-md text-muted" title="Số dư credit (cần đăng nhập)">
-          <IconCoin /> <span className="tabular-nums text-xs">—</span>
-        </div>
-        <button
-          className="h-8 flex items-center gap-1.5 px-2.5 rounded-md border border-line hover:bg-surface-2"
-          onClick={() => st.notify('Đăng nhập Google qua trình duyệt hệ thống (OAuth PKCE) sẽ có ở Phase 6. Các chức năng soạn và phát không cần đăng nhập.')}
-        >
-          <IconUser /> <span className="text-xs">Đăng nhập</span>
-        </button>
+        <AccountMenu />
       </header>
 
       {/* ---------------- tabs */}
@@ -200,8 +201,13 @@ export function App() {
         </div>
       </nav>
 
-      {project?.unverified && (
-        <div className="px-4 py-1.5 text-[12px] bg-accent-soft border-b border-line">Bản nhạc tạo từ nhận dạng (OMR) còn phần chưa được xác minh — hãy kiểm tra trước khi phát hoặc biên tập.</div>
+      {project && project.score.provenance.unverifiedEventIds.length > 0 && (
+        <div className="flex items-center gap-3 px-4 py-1.5 text-[12px] bg-accent-soft border-b border-line">
+          <span>Bản nhạc tạo từ nhận dạng (OMR): còn <b>{project.score.provenance.unverifiedEventIds.length}</b> nốt/dấu lặng chưa xác minh (màu nâu nhạt). Hãy đối chiếu với bản gốc, sửa nếu cần.</span>
+          <button className="ml-auto h-7 px-2.5 rounded-md border border-line bg-surface hover:bg-surface-2 disabled:opacity-40" disabled={!st.selection.measureRange}
+            onClick={() => st.selection.measureRange && st.exec(verifyMeasures(st.selection.measureRange[0], st.selection.measureRange[1]))}>Xác minh ô đang chọn</button>
+          <button className="h-7 px-2.5 rounded-md bg-accent text-accent-fg" onClick={() => st.exec(verifyMeasures(0, project.score.measures.length - 1))}>Xác minh tất cả</button>
+        </div>
       )}
 
       {/* ---------------- main */}
@@ -232,6 +238,7 @@ export function App() {
           </div>
         </div>
       )}
+      {omrFile && <OmrDialog file={omrFile} onClose={() => setOmrFile(null)} />}
       {st.paletteOpen && <Palette commands={commands} onClose={() => st.setPalette(false)} />}
       {st.toast && (
         <div role="status" className={`fixed bottom-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-[12px] hm-enter max-w-xl ${st.toast.kind === 'error' ? 'bg-warn text-white' : 'bg-fg text-bg'}`}>{st.toast.text}</div>

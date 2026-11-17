@@ -170,3 +170,12 @@ T::test('[DB] trừ credit song song (5 tiến trình) không làm số dư âm'
     eq($ok, 3, 'chỉ 3 lần trừ 30 thành công từ 100');
     eq((new WalletService($db))->balance($uid), 10);
 });
+
+T::test('[DB] loại AI chưa bật trên máy chủ: từ chối và KHÔNG trừ credit', function () {
+    $db = testDb();
+    $w = new WalletService($db);
+    $ai = new AiJobService($db, $w, ['harmony']);
+    $uid = newUser($db, 'sub-G');
+    throwsCode(fn () => $ai->create($uid, 'singer', 'x', [], 'idem-gggggggg'), 'AI_UNAVAILABLE');
+    eq($w->balance($uid), 100);
+});

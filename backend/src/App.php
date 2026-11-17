@@ -90,7 +90,16 @@ final class App
 
     private function ai(): AiJobService
     {
-        return new AiJobService($this->db, $this->wallet());
+        return new AiJobService($this->db, $this->wallet(), $this->config->list('HM_AI_ENABLED_TYPES'));
+    }
+
+    private function storageDir(): string
+    {
+        $d = $this->config->get('HM_STORAGE_DIR') ?? dirname(__DIR__) . '/storage';
+        if (!is_dir($d) && !@mkdir($d, 0750, true) && !is_dir($d)) {
+            throw new ApiException(503, 'STORAGE_UNAVAILABLE', 'Không ghi được thư mục lưu trữ');
+        }
+        return rtrim($d, '/');
     }
 
     private function limiter(): RateLimiter
@@ -191,7 +200,8 @@ final class App
         ], [$user]);
         $r->add('GET', '/api/v1/pricing', fn () => [
             'packages' => $this->payments()->packages(),
-            'ai' => $this->db->all('SELECT job_type, credit_cost FROM ai_pricing WHERE active = 1'),
+            'ai' => array_map(fn (array $p) => $p + ['available' => $this->ai()->isEnabled($p['job_type'])],
+                $this->db->all('SELECT job_type, credit_cost FROM ai_pricing WHERE active = 1')),
         ]);
 
         // ---- thanh toán
@@ -230,6 +240,40 @@ final class App
             };
             return ['RspCode' => $code[0], 'Message' => $code[1]];
         }, [$this->ipLimit('webhook', 300)]);
+
+        // ---- AI: tải bản nhạc đầu vào (MusicXML ≤ 2 MB), lưu theo SHA-256
+        $r->add('POST', '/api/v1/ai/inputs', function (Request $req) {
+            $b = $req->json();
+            $content = (string) ($b['content'] ?? '');
+            if (($b['format'] ?? '') !== 'musicxml' || $content === '' || strlen($content) > 2_000_000 || !str_contains($content, '<score-partwise')) {
+                throw new ApiException(400, 'INVALID_INPUT', 'Cần nội dung MusicXML (score-partwise) tối đa 2 MB');
+            }
+            $uid = $req->auth['user_id'];
+            $sha = hash('sha256', $content);
+            $rel = "inputs/$uid/$sha.musicxml";
+            $path = $this->storageDir() . '/' . $rel;
+            if (!is_file($path)) {
+                @mkdir(dirname($path), 0750, true);
+                if (file_put_contents($path, $content, LOCK_EX) === false) {
+                    throw new ApiException(503, 'STORAGE_UNAVAILABLE', 'Không lưu được file');
+                }
+            }
+            return Response::json(['input_reference' => $rel, 'sha256' => $sha], 201);
+        }, [$user]);
+        // Tải kết quả AI (chỉ chủ sở hữu, còn hạn)
+        $r->add('GET', '/api/v1/ai/outputs/{id}', function (Request $req) {
+            $o = $this->db->one(
+                'SELECT o.file_path, o.format, o.expires_at FROM ai_outputs o JOIN ai_jobs j ON j.id = o.job_id
+                 WHERE o.id = ? AND j.user_id = ? AND (o.expires_at IS NULL OR o.expires_at > CURRENT_TIMESTAMP(3))',
+                [(int) $req->params['id'], $req->auth['user_id']],
+            ) ?? throw new ApiException(404, 'NOT_FOUND', 'Không tìm thấy hoặc đã hết hạn lưu trữ');
+            $path = realpath($this->storageDir() . '/' . ltrim((string) $o['file_path'], '/'));
+            if (!$path || !str_starts_with($path, realpath($this->storageDir()) . DIRECTORY_SEPARATOR) || !is_file($path)) {
+                throw new ApiException(404, 'NOT_FOUND', 'File kết quả không còn');
+            }
+            $mime = ['wav' => 'audio/wav', 'mp3' => 'audio/mpeg', 'flac' => 'audio/flac', 'json' => 'application/json', 'mid' => 'audio/midi', 'musicxml' => 'application/vnd.recordare.musicxml+xml'][$o['format']] ?? 'application/octet-stream';
+            return new Response(200, (string) file_get_contents($path), ['Content-Type' => $mime, 'Content-Disposition' => 'attachment; filename="holy-melody-' . (int) $req->params['id'] . '.' . $o['format'] . '"']);
+        }, [$user]);
 
         // ---- AI jobs
         $r->add('POST', '/api/v1/ai/jobs', function (Request $req) {
@@ -301,6 +345,63 @@ final class App
                 return ['adjustment_id' => $adjId, 'balance' => $tx['balance_after']];
             });
         }, [$this->requireAdmin('finance')]);
+        $viewer = $this->requireAdmin('viewer', 'support', 'finance');
+        $r->add('GET', '/api/v1/admin/users', function (Request $req) {
+            $q = '%' . trim((string) ($req->query['q'] ?? '')) . '%';
+            return ['items' => $this->db->all(
+                'SELECT u.id, u.email, u.name, u.status, u.created_at, u.last_login_at, w.balance FROM users u LEFT JOIN wallets w ON w.user_id = u.id
+                 WHERE u.email LIKE ? OR u.name LIKE ? ORDER BY u.id DESC LIMIT 100', [$q, $q])];
+        }, [$viewer]);
+        $r->add('GET', '/api/v1/admin/orders', fn (Request $req) => ['items' => $this->db->all(
+            'SELECT o.id, o.user_id, u.email, o.amount_vnd, o.credits, o.status, o.gateway, o.gateway_transaction_id, o.created_at, o.paid_at
+             FROM payment_orders o JOIN users u ON u.id = o.user_id' . (($req->query['status'] ?? '') !== '' ? ' WHERE o.status = ?' : '') . ' ORDER BY o.id DESC LIMIT 200',
+            ($req->query['status'] ?? '') !== '' ? [(string) $req->query['status']] : [])], [$viewer]);
+        $r->add('GET', '/api/v1/admin/payment-events', fn () => ['items' => $this->db->all(
+            "SELECT id, payment_order_id, gateway, verification_status, received_at FROM payment_events WHERE verification_status <> 'valid' ORDER BY id DESC LIMIT 200")], [$viewer]);
+        $r->add('GET', '/api/v1/admin/jobs', fn () => ['items' => $this->db->all(
+            'SELECT j.id, j.user_id, u.email, j.job_type, j.status, j.credit_cost, j.provider, j.attempts, j.error_code, j.created_at, j.completed_at,
+                    (SELECT COALESCE(SUM(c.cost_usd_micros),0) FROM ai_provider_costs c WHERE c.job_id = j.id) AS cost_usd_micros
+             FROM ai_jobs j JOIN users u ON u.id = j.user_id ORDER BY j.id DESC LIMIT 200')], [$viewer]);
+        $r->add('GET', '/api/v1/admin/errors', fn () => ['items' => $this->db->all('SELECT id, source, level, message, created_at FROM error_logs ORDER BY id DESC LIMIT 200')], [$viewer]);
+        $r->add('GET', '/api/v1/admin/metrics', fn () => [
+            'active_users_daily' => $this->db->all('SELECT DATE(last_login_at) d, COUNT(*) n FROM users WHERE last_login_at > DATE_SUB(NOW(), INTERVAL 30 DAY) GROUP BY DATE(last_login_at) ORDER BY d'),
+            'credit_consumption_daily' => $this->db->all("SELECT DATE(created_at) d, -SUM(amount) n FROM credit_transactions WHERE type = 'ai_charge' AND created_at > DATE_SUB(NOW(), INTERVAL 30 DAY) GROUP BY DATE(created_at) ORDER BY d"),
+            'jobs_daily' => $this->db->all('SELECT DATE(created_at) d, COUNT(*) n FROM ai_jobs WHERE created_at > DATE_SUB(NOW(), INTERVAL 30 DAY) GROUP BY DATE(created_at) ORDER BY d'),
+            'conversion' => $this->db->one("SELECT (SELECT COUNT(DISTINCT user_id) FROM payment_orders WHERE status = 'paid') paying, (SELECT COUNT(*) FROM users) total"),
+            'packages' => $this->db->all('SELECT id, code, name, credits, price_vnd, active, sort_order FROM credit_packages ORDER BY sort_order, id'),
+            'pricing' => $this->db->all('SELECT job_type, credit_cost, active FROM ai_pricing'),
+        ], [$viewer]);
+        $r->add('PUT', '/api/v1/admin/packages/{id}', function (Request $req) {
+            $b = $req->json();
+            $credits = (int) ($b['credits'] ?? 0);
+            $price = (int) ($b['price_vnd'] ?? 0);
+            if ($credits <= 0 || $price <= 0) {
+                throw new ApiException(400, 'INVALID', 'Credit và giá phải lớn hơn 0');
+            }
+            $this->db->exec('UPDATE credit_packages SET name = ?, credits = ?, price_vnd = ?, active = ? WHERE id = ?',
+                [mb_substr((string) ($b['name'] ?? ''), 0, 100), $credits, $price, !empty($b['active']) ? 1 : 0, (int) $req->params['id']]);
+            $this->db->exec('INSERT INTO audit_logs (actor_user_id, actor_type, action, target_type, target_id, details) VALUES (?, \'admin\', \'package.update\', \'credit_package\', ?, ?)',
+                [$req->auth['user_id'], (int) $req->params['id'], json_encode($b, JSON_UNESCAPED_UNICODE)]);
+            return ['ok' => true];
+        }, [$this->requireAdmin('finance')]);
+        $r->add('POST', '/api/v1/admin/releases', function (Request $req) {
+            $b = $req->json();
+            foreach (['version', 'platform', 'architecture', 'download_url', 'checksum'] as $k) {
+                if (empty($b[$k])) {
+                    throw new ApiException(400, 'INVALID', "Thiếu $k");
+                }
+            }
+            if (!preg_match('/^[0-9a-f]{64}$/', (string) $b['checksum']) || !str_starts_with((string) $b['download_url'], 'https://')) {
+                throw new ApiException(400, 'INVALID', 'Checksum SHA-256 (hex) và URL https là bắt buộc');
+            }
+            $this->db->exec(
+                'INSERT INTO app_releases (version, platform, architecture, download_url, file_size, checksum, signed, release_notes, min_os_version, published_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP(3))',
+                [(string) $b['version'], (string) $b['platform'], (string) $b['architecture'], (string) $b['download_url'], (int) ($b['file_size'] ?? 0),
+                    (string) $b['checksum'], !empty($b['signed']) ? 1 : 0, (string) ($b['release_notes'] ?? ''), (string) ($b['min_os_version'] ?? '')],
+            );
+            return Response::json(['id' => $this->db->lastId()], 201);
+        }, [$this->requireAdmin('owner')]);
         $r->add('PUT', '/api/v1/admin/pricing/{type}', function (Request $req) {
             $cost = (int) ($req->json()['credit_cost'] ?? -1);
             if ($cost < 0 || $cost > 100000) {

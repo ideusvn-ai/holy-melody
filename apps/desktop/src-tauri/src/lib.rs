@@ -1,10 +1,13 @@
 //! Lõi Rust của Holy Melody: lưu dự án (SQLite), ghi file, PKCE cho đăng nhập Google,
 //! và (Phase 2) engine âm thanh rustysynth + cpal.
 
+mod account;
 mod audio;
 mod audio_cmds;
 mod auth;
 mod files;
+mod midi_in;
+mod omr;
 mod project_store;
 
 use std::sync::Mutex;
@@ -23,6 +26,7 @@ fn print_page(window: tauri::WebviewWindow) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .manage(midi_in::MidiState::default())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -55,6 +59,18 @@ pub fn run() {
             audio_cmds::playback_status,
             audio_cmds::export_wav,
             print_page,
+            omr::omr_detect,
+            omr::omr_run,
+            omr::omr_temp_input,
+            account::account_config,
+            account::account_login,
+            account::account_me,
+            account::account_logout,
+            account::api_request,
+            account::open_external,
+            midi_in::midi_list,
+            midi_in::midi_connect,
+            midi_in::midi_disconnect,
             files::write_file,
             files::read_file,
             project_store::project_autosave,

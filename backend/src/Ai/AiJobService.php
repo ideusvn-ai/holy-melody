@@ -19,8 +19,15 @@ final class AiJobService
     public const TYPES = ['harmony', 'singer', 'lyrics', 'other'];
     private const LEASE_SECONDS = 600;
 
-    public function __construct(private readonly Db $db, private readonly WalletService $wallet)
+    /** @param list<string>|null $enabledTypes null = cho phép mọi loại (dùng trong test) */
+    public function __construct(private readonly Db $db, private readonly WalletService $wallet, private readonly ?array $enabledTypes = null)
     {
+    }
+
+    /** Loại tác vụ có worker/provider thật đang chạy (do quản trị cấu hình) */
+    public function isEnabled(string $type): bool
+    {
+        return $this->enabledTypes === null || in_array($type, $this->enabledTypes, true);
     }
 
     public function price(string $type): int
@@ -37,6 +44,10 @@ final class AiJobService
     {
         if (!in_array($type, self::TYPES, true)) {
             throw new ApiException(400, 'INVALID_JOB_TYPE', 'Loại tác vụ không hợp lệ');
+        }
+        if (!$this->isEnabled($type)) {
+            // Không nhận job (và không trừ credit) khi chưa có provider xử lý loại này
+            throw new ApiException(503, 'AI_UNAVAILABLE', 'Tính năng AI này chưa được bật trên máy chủ');
         }
         if (!preg_match('/^[A-Za-z0-9_\-]{8,100}$/', $idempotencyKey)) {
             throw new ApiException(400, 'INVALID_IDEMPOTENCY_KEY', 'Thiếu hoặc sai header Idempotency-Key');

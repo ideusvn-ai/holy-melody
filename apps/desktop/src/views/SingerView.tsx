@@ -3,7 +3,9 @@
  * Tạo giọng hát cần đăng nhập, credit và một provider SVS có ràng buộc theo nốt (Phase 5).
  * Không có nút "Tạo" giả: nút bị khóa kèm lý do cụ thể.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { exportMusicXml } from '@holy-melody/music-core';
+import { useAccount } from '../state/account';
 import { keyAt, ScoreIndex, timeSigAt, type ChordEvent } from '@holy-melody/music-core';
 import { useActiveProject, useStore } from '../state/store';
 import { IconMic } from '../components/icons';
@@ -115,18 +117,114 @@ export function SingerCenter() {
           </label>
         </section>
 
-        <section className="rounded-xl border border-dashed border-line p-4 flex items-center gap-4">
-          <div className="flex-1 text-[12px]">
-            <div className="font-semibold">Chi phí: 10 credit / lần tạo</div>
-            <div className="text-muted mt-0.5">
-              Chưa thể tạo: cần đăng nhập Google, và chưa có provider tổng hợp giọng hát tiếng Việt có ràng buộc theo nốt được cấu hình (Phase 5–6).
-            </div>
-          </div>
-          <button disabled className="h-10 px-5 rounded-lg bg-accent text-accent-fg font-semibold opacity-40 cursor-not-allowed" title="Tính năng chưa được kích hoạt">
-            Tạo bài hát
-          </button>
-        </section>
+        <GeneratePanel style={style} voice={voice} strict={strict} coverage={coverage} />
       </div>
     </div>
+  );
+}
+
+
+interface Job { id: number; type?: string; job_type?: string; status: string; credit_cost: number; progress: number | null; error?: { code: string; message: string } | null; created_at: string; outputs?: { id: number; kind: string; format: string; duration: number | null }[] }
+
+const STATUS: Record<string, string> = { pending: 'Đang chờ', processing: 'Đang xử lý', completed: 'Hoàn thành', failed: 'Thất bại', cancelled: 'Đã hủy' };
+
+function GeneratePanel({ style, voice, strict, coverage }: { style: string; voice: string; strict: boolean; coverage: number }) {
+  const project = useActiveProject();
+  const acc = useAccount();
+  const notify = useStore((s) => s.notify);
+  const [pricing, setPricing] = useState<{ job_type: string; credit_cost: number; available: boolean }[] | null>(null);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  // giữ cùng một Idempotency-Key cho tới khi tạo job thành công → bấm lại/lỗi mạng không bị trừ hai lần
+  const idem = useRef<string>(crypto.randomUUID());
+
+  const loadJobs = () => acc.api<{ items: Job[] }>('GET', '/api/v1/ai/jobs').then((r) => setJobs(r.items.filter((j) => (j.job_type ?? j.type) === 'singer'))).catch(() => {});
+  useEffect(() => {
+    if (!acc.configured) return;
+    acc.api<{ ai: { job_type: string; credit_cost: number; available: boolean }[] }>('GET', '/api/v1/pricing').then((r) => setPricing(r.ai)).catch(() => setPricing([]));
+    if (acc.user) void loadJobs();
+  }, [acc.configured, acc.user]); // eslint-disable-line react-hooks/exhaustive-deps
+  // theo dõi job đang chạy
+  useEffect(() => {
+    if (!jobs.some((j) => j.status === 'pending' || j.status === 'processing')) return;
+    const t = setInterval(() => void loadJobs().then(() => acc.refresh()), 4000);
+    return () => clearInterval(t);
+  }, [jobs]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const singer = pricing?.find((p) => p.job_type === 'singer');
+  const cost = singer?.credit_cost ?? 10;
+  const reason =
+    !acc.configured ? acc.reason ?? 'Chưa cấu hình máy chủ'
+    : !acc.user ? 'Cần đăng nhập Google để dùng AI.'
+    : !singer?.available ? 'Máy chủ chưa bật AI Singer (chưa có nhà cung cấp tổng hợp giọng hát tiếng Việt theo nốt). Bạn sẽ không bị trừ credit.'
+    : coverage < 50 ? 'Bài cần có lời ca cho phần lớn các nốt.'
+    : (acc.balance ?? 0) < cost ? `Không đủ credit (cần ${cost}).`
+    : null;
+
+  const create = async () => {
+    if (!project) return;
+    setBusy(true);
+    try {
+      const up = await acc.api<{ input_reference: string }>('POST', '/api/v1/ai/inputs', { format: 'musicxml', content: exportMusicXml(project.score) });
+      const job = await acc.api<Job & { balance: number }>('POST', '/api/v1/ai/jobs', {
+        type: 'singer', input_reference: up.input_reference,
+        params: { style, voice, strict_melody: strict, melody_part_id: project.score.parts[0]?.id, verse: 1, score_revision: project.score.revision },
+      }, idem.current);
+      idem.current = crypto.randomUUID();
+      notify(`Đã tạo job #${job.id} (−${job.credit_cost} credit). Có thể đóng app, kết quả vẫn được lưu.`);
+      setConfirm(false);
+      await acc.refresh();
+      await loadJobs();
+    } catch (e) {
+      notify(String((e as Error).message ?? e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const cancel = (id: number) => acc.api('POST', `/api/v1/ai/jobs/${id}/cancel`).then(() => { notify('Đã hủy, credit được hoàn lại.'); void loadJobs(); void acc.refresh(); }).catch((e) => notify(String(e.message ?? e), 'error'));
+
+  return (
+    <>
+      <section className="rounded-xl border border-dashed border-line p-4 flex items-center gap-4">
+        <div className="flex-1 text-[12px]">
+          <div className="font-semibold">Chi phí: {cost} credit / lần tạo{acc.balance !== null ? ` · Số dư: ${acc.balance}` : ''}</div>
+          <div className="text-muted mt-0.5">{reason ?? 'Sẵn sàng. Job thất bại do hệ thống được hoàn credit tự động.'}</div>
+        </div>
+        <button disabled={!!reason || busy} onClick={() => setConfirm(true)} className="h-10 px-5 rounded-lg bg-accent text-accent-fg font-semibold disabled:opacity-40 disabled:cursor-not-allowed">
+          Tạo bài hát
+        </button>
+      </section>
+
+      {jobs.length > 0 && (
+        <section className="rounded-xl border border-line bg-surface p-4">
+          <h2 className="font-semibold mb-2">Bài hát đã tạo</h2>
+          <ul className="divide-y divide-line text-[12px]">
+            {jobs.map((j) => (
+              <li key={j.id} className="py-2 flex items-center gap-3">
+                <span className="font-mono text-muted">#{j.id}</span>
+                <span className="flex-1">{STATUS[j.status] ?? j.status}{j.progress != null && j.status === 'processing' ? ` · ${j.progress}%` : ''}{j.error ? ` · ${j.error.message}` : ''}</span>
+                <span className="text-muted">{j.created_at}</span>
+                {j.status === 'pending' && <button className="h-7 px-2 rounded border border-line" onClick={() => void cancel(j.id)}>Hủy</button>}
+                {j.status === 'completed' && acc.apiUrl && <button className="h-7 px-2 rounded border border-line" onClick={() => void acc.api<Job>('GET', `/api/v1/ai/jobs/${j.id}`).then((d) => notify(`Kết quả: ${(d.outputs ?? []).map((o) => `${o.kind}.${o.format}`).join(', ') || 'không có file'} — tải trong trang tài khoản trên website.`))}>Kết quả</button>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {confirm && (
+        <div className="fixed inset-0 z-50 bg-black/30 grid place-items-center" role="dialog">
+          <div className="w-[420px] rounded-xl bg-surface border border-line p-5 space-y-3 hm-enter">
+            <h3 className="font-semibold">Xác nhận tạo bài hát</h3>
+            <p className="text-[13px]">Giọng <b>{voice}</b>, phong cách <b>{style}</b>{strict ? ', Strict Melody Mode' : ''}. Sẽ trừ <b>{cost} credit</b> (còn {(acc.balance ?? 0) - cost} sau khi tạo).</p>
+            <div className="flex justify-end gap-2">
+              <button className="h-9 px-4 rounded-md border border-line" onClick={() => setConfirm(false)} disabled={busy}>Hủy</button>
+              <button className="h-9 px-4 rounded-md bg-accent text-accent-fg font-semibold" onClick={() => void create()} disabled={busy}>{busy ? 'Đang gửi…' : 'Xác nhận'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

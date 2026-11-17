@@ -151,3 +151,13 @@ T::test('request: bearer token, JSON lỗi', function () {
     ok((new Request('GET', '/', ['authorization' => 'Basic abc'], [], ''))->bearer() === null);
     throwsCode(fn () => $r->json(), 'INVALID_JSON');
 });
+
+T::test('AI: loại tác vụ chưa bật bị từ chối trước khi chạm CSDL', function () {
+    $ref = new \ReflectionClass(\HolyMelody\Ai\AiJobService::class);
+    $svc = $ref->newInstanceWithoutConstructor();
+    $p = $ref->getProperty('enabledTypes');
+    $p->setValue($svc, ['harmony']);
+    ok($svc->isEnabled('harmony'));
+    ok(!$svc->isEnabled('singer'));
+    throwsCode(fn () => $svc->create(1, 'singer', 'x', [], 'idem-12345678'), 'AI_UNAVAILABLE');
+});

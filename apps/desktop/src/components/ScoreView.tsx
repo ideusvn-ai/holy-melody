@@ -25,6 +25,8 @@ export function ScoreView({ editable = false, flaggedNoteIds = [] }: Props) {
   const zoom = useStore((s) => s.layout.zoom);
   const selection = useStore((s) => s.selection);
   const preview = useStore((s) => s.harmonyPreview);
+  const unverifiedIds = project?.score.provenance.unverifiedEventIds;
+  const unverified = useMemo(() => new Set(unverifiedIds ?? []), [unverifiedIds, revision]); // eslint-disable-line react-hooks/exhaustive-deps
   const select = useStore((s) => s.select);
   const status = usePlayback((s) => s.status);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -155,6 +157,7 @@ export function ScoreView({ editable = false, flaggedNoteIds = [] }: Props) {
             flagged={flagged}
             selRange={[selFrom, selTo]}
             previewChords={!!preview}
+            unverified={unverified}
             onNoteClick={onNoteClick}
             onMeasureDown={onMeasureDown}
             onMeasureEnter={onMeasureEnter}
@@ -173,6 +176,7 @@ export interface ScoreSvgBodyProps {
   flagged?: Set<string>;
   selRange?: [number, number];
   previewChords?: boolean;
+  unverified?: Set<string>;
   onNoteClick?: (e: RMouseEvent, noteId: string, eventId: string) => void;
   onMeasureDown?: (e: RMouseEvent, index: number) => void;
   onMeasureEnter?: (index: number) => void;
@@ -180,7 +184,7 @@ export interface ScoreSvgBodyProps {
 
 /** Phần thân SVG của bản nhạc – dùng chung cho màn hình, trang in/PDF và xuất SVG/PNG */
 export function ScoreSvgBody({
-  layout, score, selNotes = new Set(), flagged = new Set(), selRange = [-1, -2], previewChords = false,
+  layout, score, selNotes = new Set(), flagged = new Set(), selRange = [-1, -2], previewChords = false, unverified = new Set(),
   onNoteClick = () => {}, onMeasureDown = () => {}, onMeasureEnter = () => {},
 }: ScoreSvgBodyProps) {
   const { sp } = layout;
@@ -255,7 +259,7 @@ export function ScoreSvgBody({
       ))}
       <Decorations layout={layout} />
       {layout.events.map((ev) => (
-        <EventGlyph key={ev.event.id} box={ev} sp={sp} lyric={layout.lyricStyle} selNotes={selNotes} flagged={flagged} onNoteClick={onNoteClick} />
+        <EventGlyph key={ev.event.id} box={ev} sp={sp} lyric={layout.lyricStyle} unverified={unverified.has(ev.event.id)} selNotes={selNotes} flagged={flagged} onNoteClick={onNoteClick} />
       ))}
     </>
   );
@@ -285,8 +289,8 @@ function KeySig({ x, y, sp, fifths, clef }: { x: number; y: number; sp: number; 
   );
 }
 
-function EventGlyph({ box, sp, selNotes, flagged, onNoteClick, lyric }: {
-  box: EventBox; sp: number; lyric: { fontPx: number; family: string; italicVerses: number[] }; selNotes: Set<string>; flagged: Set<string>;
+function EventGlyph({ box, sp, selNotes, flagged, onNoteClick, lyric, unverified }: {
+  box: EventBox; sp: number; lyric: { fontPx: number; family: string; italicVerses: number[] }; unverified?: boolean; selNotes: Set<string>; flagged: Set<string>;
   onNoteClick: (e: RMouseEvent, noteId: string, eventId: string) => void;
 }) {
   const ev = box.event;
@@ -326,7 +330,7 @@ function EventGlyph({ box, sp, selNotes, flagged, onNoteClick, lyric }: {
         <g
           key={h.noteId}
           id={h.noteId}
-          className={`hm-note ${selNotes.has(h.noteId) ? 'hm-selected' : ''} ${flagged.has(h.noteId) ? 'hm-flagged' : ''}`}
+          className={`hm-note ${selNotes.has(h.noteId) ? 'hm-selected' : ''} ${flagged.has(h.noteId) ? 'hm-flagged' : ''} ${unverified ? 'hm-unverified' : ''}`}
           onClick={(e) => onNoteClick(e, h.noteId, h.eventId)}
           role="button"
           aria-label="Nốt nhạc"

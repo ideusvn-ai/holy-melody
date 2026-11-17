@@ -79,6 +79,7 @@ input, textarea, select { user-select: text; }
 .hm-note.hm-playing .hm-head, .hm-note.hm-playing .hm-stem { fill: var(--hl); stroke: var(--hl); }
 .hm-note.hm-selected .hm-head { fill: var(--sel); }
 .hm-note.hm-flagged .hm-head { fill: var(--warn); }
+.hm-note.hm-unverified .hm-head { fill: #b98a4a; }
 .hm-measure-bg { fill: transparent; cursor: crosshair; }
 .hm-measure-bg:hover { fill: rgb(47 95 167 / 0.05); }
 .hm-measure-bg.hm-selected { fill: rgb(47 95 167 / 0.12); }

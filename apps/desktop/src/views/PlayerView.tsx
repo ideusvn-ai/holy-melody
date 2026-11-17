@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useMidiInput } from '../lib/midiInput';
 import { HighlightIndex, pitchToMidi, ScoreIndex } from '@holy-melody/music-core';
 import { ScoreView } from '../components/ScoreView';
 import { useActiveProject, useStore } from '../state/store';
@@ -7,31 +8,67 @@ import { playbackPosition, usePlayback } from '../state/playback';
 export function PlayerLeft() {
   const project = useActiveProject();
   const engine = usePlayback((s) => s.engine);
-  const [ch, setCh] = useState<Record<string, { mute: boolean; solo: boolean; volume: number }>>({});
+  useStore((s) => s.revision);
+  const [, force] = useState(0);
+  const midi = useMidiInput();
+  const notify = useStore((s) => s.notify);
+  useEffect(() => {
+    void midi.refresh();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // áp dụng mixer đã lưu trong dự án khi mở / đổi engine
+  useEffect(() => {
+    for (const m of project?.score.playback.mixer ?? []) engine.setChannel(m.partId, { volume: m.volume, pan: m.pan, mute: m.mute, solo: m.solo, ...({ reverb: m.reverb, chorus: m.chorus } as object) });
+  }, [project?.id, engine]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!project) return null;
-  const upd = (id: string, patch: Partial<{ mute: boolean; solo: boolean; volume: number }>) => {
-    const cur = { mute: false, solo: false, volume: 0.8, ...ch[id], ...patch };
-    setCh({ ...ch, [id]: cur });
-    engine.setChannel(id, cur);
+  const mixer = project.score.playback.mixer;
+  const upd = (partId: string, patch: Partial<(typeof mixer)[number]>) => {
+    let m = mixer.find((x) => x.partId === partId);
+    if (!m) {
+      m = { partId, volume: 0.8, pan: 0, reverb: 0.2, chorus: 0, mute: false, solo: false };
+      mixer.push(m);
+    }
+    Object.assign(m, patch); // thiết lập nghe, lưu cùng dự án (không vào Undo)
+    engine.setChannel(partId, { ...patch } as never);
+    force((x) => x + 1);
   };
+  const slider = (label: string, value: number, min: number, max: number, onChange: (v: number) => void) => (
+    <label className="flex items-center gap-2 text-[10.5px] text-muted">
+      <span className="w-10">{label}</span>
+      <input type="range" min={min} max={max} step={0.01} value={value} onChange={(e) => onChange(Number(e.target.value))} className="flex-1 accent-[var(--accent)]" aria-label={label} />
+    </label>
+  );
   return (
     <div className="p-3 space-y-3">
-      <h3 className="text-[11px] uppercase tracking-wide text-muted">Bè / Track</h3>
+      <h3 className="text-[11px] uppercase tracking-wide text-muted">Mixer</h3>
       {project.score.parts.map((p) => {
-        const c = { mute: false, solo: false, volume: 0.8, ...ch[p.id] };
+        const c = mixer.find((x) => x.partId === p.id) ?? { volume: 0.8, pan: 0, reverb: 0.2, chorus: 0, mute: false, solo: false };
         return (
-          <div key={p.id} className="rounded-md border border-line p-2 space-y-1.5 bg-surface">
+          <div key={p.id} className="rounded-md border border-line p-2 space-y-1 bg-surface">
             <div className="flex items-center gap-1.5">
               <span className="flex-1 truncate font-medium">{p.name}</span>
               <button className={`h-6 w-6 text-[11px] rounded ${c.mute ? 'bg-warn text-white' : 'bg-surface-2'}`} onClick={() => upd(p.id, { mute: !c.mute })} title="Tắt tiếng" aria-pressed={c.mute}>M</button>
               <button className={`h-6 w-6 text-[11px] rounded ${c.solo ? 'bg-play text-white' : 'bg-surface-2'}`} onClick={() => upd(p.id, { solo: !c.solo })} title="Solo" aria-pressed={c.solo}>S</button>
             </div>
-            <input type="range" min={0} max={1} step={0.01} value={c.volume} onChange={(e) => upd(p.id, { volume: Number(e.target.value) })} className="w-full accent-[var(--accent)]" aria-label={`Âm lượng ${p.name}`} />
+            {slider('Âm lượng', c.volume, 0, 1, (v) => upd(p.id, { volume: v }))}
+            {slider('Pan', c.pan, -1, 1, (v) => upd(p.id, { pan: v }))}
+            {slider('Reverb', c.reverb, 0, 1, (v) => upd(p.id, { reverb: v }))}
             <div className="text-[10px] text-muted">GM #{p.instrument.program + 1} · kênh {p.instrument.channel + 1}</div>
           </div>
         );
       })}
-      <p className="text-[10px] text-muted leading-snug">Engine: {engine.name}. Mixer đầy đủ (pan, reverb, chorus, SoundFont) có ở Phase 2 với engine Rust.</p>
+      <h3 className="text-[11px] uppercase tracking-wide text-muted pt-1">Bàn phím MIDI</h3>
+      {midi.connected ? (
+        <div className="flex items-center gap-2 text-[12px]"><span className="h-2 w-2 rounded-full bg-play" /> <span className="flex-1 truncate">{midi.connected}</span><button className="text-[11px] underline" onClick={() => void midi.disconnect()}>Ngắt</button></div>
+      ) : (
+        <div className="flex gap-1.5">
+          <select className="flex-1 h-8 rounded-md border border-line bg-surface px-1.5 text-[12px]" defaultValue="" onChange={(e) => e.target.value !== '' && void midi.connect(Number(e.target.value)).catch((x) => notify(String(x.message ?? x), 'error'))}>
+            <option value="" disabled>{midi.ports.length ? 'Chọn thiết bị…' : 'Không thấy thiết bị'}</option>
+            {midi.ports.map((n, i) => <option key={n + i} value={i}>{n}</option>)}
+          </select>
+          <button className="h-8 px-2 rounded-md border border-line text-[12px]" onClick={() => void midi.refresh()} title="Tìm lại">↻</button>
+        </div>
+      )}
+      <p className="text-[10px] text-muted leading-snug">Engine: {engine.name}.</p>
     </div>
   );
 }
@@ -147,6 +184,10 @@ export function VirtualPiano() {
     };
   }, [engine]);
 
+  const held = useMidiInput((s) => s.held);
+  useEffect(() => useMidiInput.getState().onChord((ps, v) => {
+    if (useStore.getState().tab === 'player') for (const p of ps) engine.previewNote(p, v);
+  }), [engine]);
   const whites: number[] = [];
   for (let m = low; m <= high; m++) if (![1, 3, 6, 8, 10].includes(m % 12)) whites.push(m);
   const ww = 100 / whites.length;
@@ -156,7 +197,7 @@ export function VirtualPiano() {
         {whites.map((m, i) => (
           <button
             key={m}
-            className={`absolute top-0 bottom-0 border border-line rounded-b-sm transition-colors ${lit.has(m) ? 'bg-[var(--hl)]' : pressed.has(m) ? 'bg-accent-soft' : 'bg-white'}`}
+            className={`absolute top-0 bottom-0 border border-line rounded-b-sm transition-colors ${lit.has(m) ? 'bg-[var(--hl)]' : pressed.has(m) || held.has(m) ? 'bg-accent-soft' : 'bg-white'}`}
             style={{ left: `${i * ww}%`, width: `${ww}%` }}
             onMouseDown={() => engine.previewNote(m)}
             aria-label={`Phím ${m}`}
@@ -171,7 +212,7 @@ export function VirtualPiano() {
             return (
               <button
                 key={m}
-                className={`absolute top-0 h-[60%] rounded-b-sm z-10 ${lit.has(m) ? 'bg-[var(--hl)]' : 'bg-neutral-900'}`}
+                className={`absolute top-0 h-[60%] rounded-b-sm z-10 ${lit.has(m) ? 'bg-[var(--hl)]' : held.has(m) ? 'bg-accent' : 'bg-neutral-900'}`}
                 style={{ left: `${(leftWhite + 0.68) * ww}%`, width: `${ww * 0.64}%` }}
                 onMouseDown={() => engine.previewNote(m)}
                 aria-label={`Phím ${m}`}
