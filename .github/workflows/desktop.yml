@@ -74,7 +74,7 @@ jobs:
       matrix:
         include:
           - { name: macos-apple-silicon, os: macos-latest, target: aarch64-apple-darwin, audiveris: macos-arm64 }
-          - { name: macos-intel, os: macos-latest, target: x86_64-apple-darwin, audiveris: macos-x64 }
+          - { name: macos-intel, os: macos-15-intel, target: x86_64-apple-darwin, audiveris: macos-x64 }
           - { name: windows-x64, os: windows-latest, target: x86_64-pc-windows-msvc, audiveris: windows-x64 }
     runs-on: ${{ matrix.os }}
     steps:
@@ -166,13 +166,14 @@ jobs:
           ls ../all > artifacts.txt
           git add -A && git commit -qm "CI ${{ github.run_id }} @ ${{ github.sha }}: check=$CHECK build=$BUILD"
           git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-status
-      - name: Tạo Release khi build thành công
-        if: needs.build.result == 'success'
+      - name: Tạo Release (kể cả khi chỉ một số nền tảng build xong)
+        if: always() && needs.check.result == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="build-${{ github.run_number }}"
           files=$(find all -path 'all/holy-melody-*' -type f)
+          [ -z "$files" ] && { echo "Không có bộ cài nào"; exit 0; }
           gh release create "$tag" $files --repo "${{ github.repository }}" --target "${{ github.sha }}" --prerelease \
             --title "Holy Melody – bản build ${{ github.run_number }}" \
             --notes "Bản build tự động từ commit ${{ github.sha }}. Chưa ký số: macOS chuột phải → Open; Windows chọn More info → Run anyway."
