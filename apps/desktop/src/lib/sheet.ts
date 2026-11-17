@@ -319,9 +319,11 @@ export async function openSheet(file: File, h: OpenSheetHandlers): Promise<Score
     binaries[0] = r.binaries.get(1);
     finished = 1;
   } else {
-    // ---- 3. song song theo trang (mỗi tiến trình Audiveris cần ~1 GB RAM: giới hạn số luồng)
+    // ---- 3. theo từng trang: trang 1 xong là phát được ngay. Mỗi tiến trình Audiveris đã tự dùng nhiều nhân và
+    // tốn vài giây khởi động Java (đo trên máy 2 nhân: 2 trang song song 28 s, cả file 21 s, một trang ~12 s),
+    // nên chỉ chạy song song khi máy đủ mạnh (≥ 8 nhân; mỗi tiến trình ~1 GB RAM).
     const cores = navigator.hardwareConcurrency || 4;
-    const workers = Math.max(1, Math.min(total, cores >= 12 ? 4 : cores >= 8 ? 3 : 2));
+    const workers = Math.max(1, Math.min(total, 4, Math.floor(cores / 4)));
     const settled: boolean[] = new Array(total).fill(false);
     let next = 0;
     const worker = async (): Promise<void> => {

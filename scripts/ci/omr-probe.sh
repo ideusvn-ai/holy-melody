@@ -34,6 +34,14 @@ wait; echo "pdf-parallel-2 $(( $(date +%s) - t0 ))s (nproc=$(nproc), RAM=$(free 
 # giải nén .mxl để đọc được bằng git
 find ci-logs/omr/out -name '*.mxl' | while read m; do d="${m%.mxl}.xml.d"; mkdir -p "$d"; unzip -o -q "$m" -d "$d"; done
 find ci-logs/omr/out -name '*.omr' | while read m; do unzip -l "$m" > "$m.list.txt"; d="${m%.omr}.omr.d"; mkdir -p "$d"; unzip -o -q "$m" -d "$d" '*.xml' || true; done
+# kiểm tra kết quả nhận dạng từng trang
+for d in pdf-all pdf-p1 pdf-p2; do
+  echo "== $d"; ls -R ci-logs/omr/out/$d | head -20
+  for x in $(find ci-logs/omr/out/$d -name '*.xml' -path '*xml.d*' ! -name container.xml); do
+    echo "$x measures=$(grep -c '<measure ' $x) parts=$(grep -c '<score-part ' $x) time=$(grep -c '<time' $x) key=$(grep -c '<key' $x) pages=$(grep -c 'new-page' $x)"
+  done
+  for o in $(find ci-logs/omr/out/$d -name '*.omr.list.txt'); do grep -o 'sheet#[0-9]*/sheet#[0-9]*.xml' $o; done
+done
 rm -f ci-logs/omr/in/*.png ci-logs/omr/in/*.jpg ci-logs/omr/in/*.pdf
 find ci-logs/omr -type f | head -100
 exit 0
