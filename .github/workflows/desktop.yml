@@ -174,6 +174,10 @@ jobs:
           tag="build-${{ github.run_number }}"
           files=$(find all -path 'all/holy-melody-*' -type f)
           [ -z "$files" ] && { echo "Không có bộ cài nào"; exit 0; }
+          # chạy lại job lỗi: bản phát hành đã có → chỉ thêm/thay file
+          if gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$tag" $files --clobber --repo "${{ github.repository }}"; exit 0
+          fi
           gh release create "$tag" $files --repo "${{ github.repository }}" --target "${{ github.sha }}" --prerelease \
             --title "Holy Melody – bản build ${{ github.run_number }}" \
             --notes "Bản build tự động từ commit ${{ github.sha }}. Chưa ký số: macOS chuột phải → Open; Windows chọn More info → Run anyway."
