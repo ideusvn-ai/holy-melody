@@ -119,3 +119,21 @@ pub fn project_load_version(state: State<AppState>, version_id: i64) -> Result<S
     let s = state.store.lock().map_err(err)?;
     s.conn.query_row("SELECT score_json FROM project_versions WHERE id=?1", params![version_id], |r| r.get(0)).map_err(err)
 }
+
+/// Đánh dấu dự án đã đóng bình thường (không cần khôi phục)
+#[tauri::command]
+pub fn project_mark_clean(state: State<AppState>, id: String) -> Result<(), String> {
+    let s = state.store.lock().map_err(err)?;
+    s.conn.execute("UPDATE projects SET clean_shutdown = 1 WHERE id = ?1", params![id]).map_err(err)?;
+    Ok(())
+}
+
+/// Bản lưu tự động mới nhất của một dự án
+#[tauri::command]
+pub fn project_latest(state: State<AppState>, id: String) -> Result<Option<String>, String> {
+    let s = state.store.lock().map_err(err)?;
+    Ok(s
+        .conn
+        .query_row("SELECT score_json FROM project_versions WHERE project_id = ?1 ORDER BY id DESC LIMIT 1", params![id], |r| r.get(0))
+        .ok())
+}

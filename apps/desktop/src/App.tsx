@@ -4,6 +4,7 @@ import { usePlayback } from './state/playback';
 import { detectKind, exportMidiFile, exportMusicXmlFile, importFile, saveProject } from './lib/fileio';
 import { OmrDialog } from './components/OmrDialog';
 import { AccountMenu } from './components/AccountMenu';
+import { listRecoverable, markClean, recover, startAutosave, type Recoverable } from './lib/autosave';
 import { verifyMeasures } from '@holy-melody/music-core';
 import { exportMxlFile, exportPngFile, exportSvgFile, exportWavFile, printScore } from './lib/exporters';
 import { PlayerCenter, PlayerLeft, PlayerRight } from './views/PlayerView';
@@ -49,9 +50,12 @@ export function App() {
     document.documentElement.dataset.reducedMotion = String(st.reducedMotion);
   }, [st.reducedMotion]);
 
-  // ---- dự án đầu tiên
+  // ---- dự án đầu tiên, tự động lưu, khôi phục sau sự cố
+  const [recoverable, setRecoverable] = useState<Recoverable[]>([]);
   useEffect(() => {
     if (useStore.getState().projects.length === 0) useStore.getState().newProject();
+    void listRecoverable().then(setRecoverable);
+    return startAutosave();
   }, []);
 
   const [omrFile, setOmrFile] = useState<File | null>(null);
@@ -236,6 +240,22 @@ export function App() {
             <div className="font-semibold">Thả file để mở</div>
             <div className="text-muted text-xs mt-1">MusicXML · MIDI · dự án Holy Melody</div>
           </div>
+        </div>
+      )}
+      {recoverable.length > 0 && (
+        <div className="fixed bottom-20 right-6 z-40 w-96 rounded-xl border border-line bg-surface shadow-xl p-4 space-y-2 hm-enter" role="alertdialog" aria-label="Khôi phục bản nhạc">
+          <div className="font-semibold">Khôi phục bản nhạc chưa lưu?</div>
+          <p className="text-[12px] text-muted">Lần trước Holy Melody đóng đột ngột. Các bản sau được lưu tự động:</p>
+          <ul className="text-[12px] space-y-1">
+            {recoverable.slice(0, 5).map((r) => (
+              <li key={r.id} className="flex items-center gap-2">
+                <span className="flex-1 truncate">{r.title}</span>
+                <span className="text-muted">{new Date(r.updated_at * 1000).toLocaleString('vi-VN')}</span>
+                <button className="h-7 px-2 rounded-md bg-accent text-accent-fg" onClick={() => void recover(r.id).then((s) => { if (s) st.newProject(s, `${s.meta.title}.holymelody`); setRecoverable((x) => x.filter((y) => y.id !== r.id)); })}>Mở</button>
+              </li>
+            ))}
+          </ul>
+          <button className="text-[12px] underline text-muted" onClick={() => { for (const r of recoverable) void markClean(r.id); setRecoverable([]); }}>Bỏ qua</button>
         </div>
       )}
       {omrFile && <OmrDialog file={omrFile} onClose={() => setOmrFile(null)} />}

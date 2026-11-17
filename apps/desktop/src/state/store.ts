@@ -150,6 +150,8 @@ export const useStore = create<State>((set, get) => {
       refresh();
     },
     closeProject(id) {
+      const closing = get().projects.find((p) => p.id === id);
+      if (closing) void import('../lib/autosave').then((m) => m.markClean(closing.score.id));
       const projects = get().projects.filter((p) => p.id !== id);
       set({ projects, activeId: get().activeId === id ? (projects[projects.length - 1]?.id ?? null) : get().activeId });
       refresh();
@@ -186,6 +188,7 @@ export const useStore = create<State>((set, get) => {
     markSaved(path, name) {
       const p = active();
       if (!p) return;
+      void import('../lib/autosave').then((m) => m.markClean(p.score.id));
       set({
         projects: get().projects.map((x) => (x.id === p.id ? { ...x, savedRevision: p.score.revision, filePath: path ?? x.filePath, fileName: name ?? x.fileName } : x)),
       });

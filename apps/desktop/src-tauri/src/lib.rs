@@ -77,6 +77,8 @@ pub fn run() {
             project_store::project_recover_list,
             project_store::project_versions,
             project_store::project_load_version,
+            project_store::project_mark_clean,
+            project_store::project_latest,
             auth::auth_pkce_begin,
         ])
         .run(tauri::generate_context!())
