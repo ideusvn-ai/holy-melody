@@ -58,6 +58,8 @@ export interface Note {
   tieStart?: boolean;
   tieStop?: boolean;
   accidentalDisplay?: AccidentalDisplay;
+  /** File nguồn có ký hiệu dấu hoá viết riêng cho nốt này (dùng khi hiệu chỉnh OMR) */
+  writtenAccidental?: boolean;
   /** 0..1 độ tin cậy, chỉ có khi dữ liệu tạo từ OMR */
   omrConfidence?: number;
 }
@@ -301,6 +303,68 @@ export interface ScoreDocument {
   provenance: Provenance;
   /** Trạng thái Trợ lý soạn nhạc: gợi ý người dùng đã bỏ qua, quy tắc đã tắt */
   advisor?: AdvisorState;
+  /** Bản nhạc mở từ ảnh/PDF: ảnh trang gốc, tọa độ từng ô nhịp, kết quả đối chiếu thủ công */
+  sheet?: SheetSource;
+}
+
+/** Hình chữ nhật trên ảnh trang gốc, đơn vị = tỉ lệ 0..1 theo chiều rộng/cao trang (không phụ thuộc độ phân giải) */
+export interface SheetBox {
+  page: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface SheetPage {
+  /** Tên file ảnh trong gói dự án .holymelody, vd pages/1.png */
+  file: string;
+  /** Kích thước ảnh, px */
+  width: number;
+  height: number;
+}
+
+export interface SheetMeasureGeom extends SheetBox {
+  measureIndex: number;
+  /** Chỉ số hệ thống (dòng nhạc) trên toàn bài */
+  system: number;
+  /** Vị trí nốt theo thời gian: [tick trong ô nhịp, x tỉ lệ trang] — để con trỏ chạy đúng trên ảnh */
+  ticks: [number, number][];
+}
+
+export interface OmrSignal {
+  measureIndex: number;
+  code: 'KEY_SUSPECT' | 'LOW_GRADE';
+  message: string;
+}
+
+export type ReviewStatus = 'confirmed' | 'corrected' | 'rerecognized' | 'flagged';
+
+/** Kết quả đối chiếu (human-in-the-loop) một ô nhịp, lưu vĩnh viễn trong dự án */
+export interface MeasureReview {
+  measureId: string;
+  status: ReviewStatus;
+  box: SheetBox;
+  /** Mã lỗi Validator còn lại lúc người dùng xác nhận */
+  issues: string[];
+  /** Cách nhận dạng ra kết quả cuối: audiveris | audiveris-region:<cấu hình> | ai:<mô hình> | manual */
+  engine: string;
+  at: string;
+}
+
+export interface SheetSource {
+  kind: 'image' | 'pdf';
+  fileName: string;
+  /** SHA-256 của file gốc: khoá để trừ credit đúng một lần cho mỗi bản nhạc */
+  hash: string;
+  pages: SheetPage[];
+  measures: SheetMeasureGeom[];
+  /** overlay: chỉ phủ lớp nhận dạng lên ảnh để phát MIDI; edit: đã dựng khuông nhạc đầy đủ để biên tập */
+  mode: 'overlay' | 'edit';
+  conversion?: { at: string; credits: number; transactionId?: number };
+  /** Vùng khó phát hiện từ dữ liệu Audiveris + ảnh nhị phân (điểm tin cậy thấp, nghi sót hoá biểu…) */
+  signals?: OmrSignal[];
+  reviews: Record<string, MeasureReview>;
 }
 
 export interface AdvisorState {

@@ -36,7 +36,12 @@ jobs:
       - run: chmod +x scripts/ci/*.sh
       - run: scripts/ci/step.sh npm-install npm install --no-audit --no-fund
       - run: scripts/ci/step.sh test-core npm test
+      - name: MySQL cho kiểm thử tích hợp
+        run: |
+          sudo systemctl start mysql
+          mysql -uroot -proot -e "CREATE DATABASE hm_test CHARACTER SET utf8mb4"
       - run: scripts/ci/step.sh test-backend php backend/tests/run.php
+        env: { HM_TEST_DB_HOST: 127.0.0.1, HM_TEST_DB_NAME: hm_test, HM_TEST_DB_USER: root, HM_TEST_DB_PASS: root }
       - run: scripts/ci/step.sh typecheck-ui npm run typecheck -w @holy-melody/desktop
         continue-on-error: true
       - run: scripts/ci/step.sh icons npm run icons

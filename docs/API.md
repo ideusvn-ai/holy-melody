@@ -14,6 +14,8 @@
 | GET | `/api/v1/payments/orders/{id}` | Trạng thái đơn |
 | POST | `/api/v1/webhooks/payos` · GET `/webhooks/vnpay` · POST `/webhooks/momo` | IPN từ cổng (xác thực bằng chữ ký) |
 | POST | `/api/v1/ai/inputs` | `{format:"musicxml", content}` → `input_reference` |
+| GET | `/api/v1/omr/edit-price` | Giá chuyển ảnh/PDF sang Edit (mặc định 10 credit) |
+| POST | `/api/v1/omr/edit-conversions` | `{source_hash, title, pages, measures}` → trừ credit **một lần** cho mỗi (người dùng, file gốc); gọi lại trả kết quả cũ (`replayed: true`) |
 | POST | `/api/v1/ai/jobs` | `{type, input_reference, params}` + `Idempotency-Key` → trừ credit một lần |
 | GET | `/api/v1/ai/jobs` · `/api/v1/ai/jobs/{id}` | Danh sách / chi tiết + outputs |
 | POST | `/api/v1/ai/jobs/{id}/cancel` | Hủy job đang chờ, hoàn credit |

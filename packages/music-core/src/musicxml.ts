@@ -370,6 +370,7 @@ function readNote(node: XmlElement, pitchEl: XmlElement, used: Set<string>) {
     tieStart: ties.some((t) => t.attrs.type === 'start') || undefined,
     tieStop: ties.some((t) => t.attrs.type === 'stop') || undefined,
     accidentalDisplay: acc && child(node, 'accidental')?.attrs.cautionary === 'yes' ? ('cautionary' as const) : undefined,
+    writtenAccidental: acc ? true : undefined,
   };
 }
 

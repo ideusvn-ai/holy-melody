@@ -12,6 +12,8 @@ import { AdvisorPanel } from '../components/AdvisorPanel';
 import { ScoreView } from '../components/ScoreView';
 import { Transport } from '../components/Transport';
 import { useActiveProject, useStore } from '../state/store';
+import { EditGate, ReviewPanel } from '../components/ReviewPanel';
+import { ConvertDialog } from '../components/ConvertDialog';
 import { usePlayback } from '../state/playback';
 
 const DURATIONS: { type: DurationType; key: string; label: string; glyph: string }[] = [
@@ -41,7 +43,7 @@ export function EditorLeft() {
   const loc = useSelectedEvent();
   const exec = useStore((s) => s.exec);
   const sel = useStore((s) => s.selection);
-  if (!project) return null;
+  if (!project || project.score.sheet?.mode === 'overlay') return null;
   const ev = loc?.event;
   const chordEv = ev?.kind === 'chord' ? ev : undefined;
   const noteLoc = loc && 'note' in loc ? (loc as NoteLocation) : undefined;
@@ -156,11 +158,15 @@ export function EditorLeft() {
 const KEYS = ['Cb', 'Gb', 'Db', 'Ab', 'Eb', 'Bb', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#'];
 
 export function EditorRight() {
-  const [tab, setTab] = useState<'advisor' | 'harmony' | 'lyrics'>('advisor');
+  const project = useActiveProject();
+  const fromSheet = project?.score.sheet?.mode === 'edit';
+  const [tab, setTab] = useState<'review' | 'advisor' | 'harmony' | 'lyrics'>(fromSheet ? 'review' : 'advisor');
+  if (project?.score.sheet?.mode === 'overlay') return null;
+  const tabs = [...(fromSheet ? [['review', 'Đối chiếu']] : []), ['advisor', 'Trợ lý'], ['harmony', 'Hợp âm'], ['lyrics', 'Lời ca']] as [typeof tab, string][];
   return (
     <div className="flex flex-col h-full min-h-0">
       <div className="flex border-b border-line text-[12px]" role="tablist">
-        {([['advisor', 'Trợ lý'], ['harmony', 'Hợp âm'], ['lyrics', 'Lời ca']] as const).map(([id, label]) => (
+        {tabs.map(([id, label]) => (
           <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
             className={`flex-1 h-9 relative ${tab === id ? 'font-semibold text-fg' : 'text-muted hover:text-fg'}`}>
             {label}
@@ -169,7 +175,7 @@ export function EditorRight() {
         ))}
       </div>
       <div className="flex-1 min-h-0 overflow-auto flex flex-col">
-        {tab === 'advisor' ? <AdvisorPanel /> : tab === 'harmony' ? <HarmonyPanel /> : <LyricsPanel />}
+        {tab === 'review' && fromSheet ? <ReviewPanel /> : tab === 'advisor' || tab === 'review' ? <AdvisorPanel /> : tab === 'harmony' ? <HarmonyPanel /> : <LyricsPanel />}
       </div>
     </div>
   );
@@ -179,8 +185,18 @@ export function EditorCenter() {
   const suggestions = useStore((s) => s.advisor.suggestions);
   const flagged = useMemo(() => suggestions.flatMap((x) => (x.severity !== 'info' ? x.noteIds : [])), [suggestions]);
   const setTab = useStore((s) => s.setTab);
+  const project = useActiveProject();
+  const [convert, setConvert] = useState(false);
   useEditorShortcuts();
   useMidiStepInput();
+  if (project?.score.sheet?.mode === 'overlay') {
+    return (
+      <>
+        <EditGate onConvert={() => setConvert(true)} />
+        {convert && <ConvertDialog onClose={() => setConvert(false)} />}
+      </>
+    );
+  }
   return (
     <div className="flex-1 flex flex-col min-h-0">
       <ScoreView editable flaggedNoteIds={flagged} />
@@ -214,7 +230,7 @@ function useEditorShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const st = useStore.getState();
-      if (st.tab !== 'editor' || !project) return;
+      if (st.tab !== 'editor' || !project || project.score.sheet?.mode === 'overlay') return;
       if ((e.target as HTMLElement).closest('input,textarea,select')) return;
       const idx = new ScoreIndex(project.score);
       const noteLoc = st.selection.noteIds[0] ? idx.note(st.selection.noteIds[0]) : undefined;

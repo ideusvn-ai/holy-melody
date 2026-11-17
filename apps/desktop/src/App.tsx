@@ -11,6 +11,7 @@ import { PlayerCenter, PlayerLeft, PlayerRight } from './views/PlayerView';
 import { EditorCenter, EditorLeft, EditorRight } from './views/EditorView';
 import { SingerCenter } from './views/SingerView';
 import { Transport } from './components/Transport';
+import { Welcome } from './components/Welcome';
 import {
   IconExport, IconImport, IconLogo, IconMoon, IconNew, IconOpen, IconPanelLeft, IconPanelRight, IconRedo,
   IconSave, IconSearch, IconSettings, IconSun, IconUndo, IconX, IconZoomIn, IconZoomOut,
@@ -50,10 +51,9 @@ export function App() {
     document.documentElement.dataset.reducedMotion = String(st.reducedMotion);
   }, [st.reducedMotion]);
 
-  // ---- dự án đầu tiên, tự động lưu, khôi phục sau sự cố
+  // ---- tự động lưu, khôi phục sau sự cố (không tạo sẵn bản nhạc: màn hình chào chỉ có Tạo mới / Mở)
   const [recoverable, setRecoverable] = useState<Recoverable[]>([]);
   useEffect(() => {
-    if (useStore.getState().projects.length === 0) useStore.getState().newProject();
     void listRecoverable().then(setRecoverable);
     return startAutosave();
   }, []);
@@ -77,6 +77,9 @@ export function App() {
     }
   };
 
+  // "Mới" khi đang có dự án: về màn hình chào để chọn mẫu; khi chưa có: đã ở màn hình chào
+  const newBlank = () => { st.setActive(''); };
+
   const save = async () => {
     if (!project) return;
     try {
@@ -88,7 +91,7 @@ export function App() {
   };
 
   const commands: Cmd[] = useMemo(() => [
-    { id: 'new', label: 'Dự án mới', hint: '⌘N', run: () => st.newProject() },
+    { id: 'new', label: 'Dự án mới', hint: '⌘N', run: () => newBlank() },
     { id: 'open', label: 'Mở / Import file…', hint: '⌘O', run: () => fileInput.current?.click() },
     { id: 'save', label: 'Lưu dự án', hint: '⌘S', run: () => void save() },
     { id: 'xml', label: 'Export MusicXML', run: () => project && void exportMusicXmlFile(project.score) },
@@ -122,7 +125,7 @@ export function App() {
       if (mod && k === 'y') { e.preventDefault(); st.redo(); return; }
       if (mod && k === 's') { e.preventDefault(); void save(); return; }
       if (mod && k === 'o') { e.preventDefault(); fileInput.current?.click(); return; }
-      if (mod && k === 'n') { e.preventDefault(); st.newProject(); return; }
+      if (mod && k === 'n') { e.preventDefault(); newBlank(); return; }
       if (mod && k === 'p' && project) { e.preventDefault(); void printScore(project.score); return; }
       if (mod && ['1', '2', '3'].includes(k)) { e.preventDefault(); st.setTab(TABS[Number(k) - 1]!.id); return; }
       if (inField) return;
@@ -155,7 +158,7 @@ export function App() {
         <span className="font-semibold ml-1.5 mr-3 tracking-tight">Holy Melody</span>
         <span className="text-muted truncate max-w-56" title={project?.fileName}>{project?.score.meta.title}{dirty ? ' •' : ''}</span>
         <div className="w-px h-5 bg-line mx-2" />
-        <button className={ib} title="Mới (⌘N)" onClick={() => st.newProject()}><IconNew /></button>
+        <button className={ib} title="Mới (⌘N)" onClick={() => newBlank()}><IconNew /></button>
         <button className={ib} title="Mở (⌘O)" onClick={() => fileInput.current?.click()}><IconOpen /></button>
         <button className={ib} title="Lưu (⌘S)" onClick={() => void save()} disabled={!project}><IconSave /></button>
         <button className={ib} title="Import" onClick={() => fileInput.current?.click()}><IconImport /></button>
@@ -205,7 +208,7 @@ export function App() {
         </div>
       </nav>
 
-      {project && project.score.provenance.unverifiedEventIds.length > 0 && (
+      {project && project.score.sheet?.mode !== 'overlay' && !project.score.sheet && project.score.provenance.unverifiedEventIds.length > 0 && (
         <div className="flex items-center gap-3 px-4 py-1.5 text-[12px] bg-accent-soft border-b border-line">
           <span>Bản nhạc tạo từ nhận dạng (OMR): còn <b>{project.score.provenance.unverifiedEventIds.length}</b> nốt/dấu lặng chưa xác minh (màu nâu nhạt). Hãy đối chiếu với bản gốc, sửa nếu cần.</span>
           <button className="ml-auto h-7 px-2.5 rounded-md border border-line bg-surface hover:bg-surface-2 disabled:opacity-40" disabled={!st.selection.measureRange}
@@ -216,6 +219,7 @@ export function App() {
 
       {/* ---------------- main */}
       <main className="flex-1 flex min-h-0">
+        {!project ? <Welcome onOpen={() => fileInput.current?.click()} /> : <>
         {st.layout.leftOpen && left[st.tab] && (
           <Side side="left" width={st.layout.leftWidth} onResize={(w) => st.setLayout({ leftWidth: w })}>{left[st.tab]}</Side>
         )}
@@ -223,9 +227,10 @@ export function App() {
         {st.layout.rightOpen && right[st.tab] && (
           <Side side="right" width={st.layout.rightWidth} onResize={(w) => st.setLayout({ rightWidth: w })}>{right[st.tab]}</Side>
         )}
+        </>}
       </main>
 
-      {st.tab === 'player' && <Transport />}
+      {project && st.tab === 'player' && <Transport />}
       <footer className="h-6 flex items-center gap-4 px-3 text-[10.5px] text-muted border-t border-line bg-surface">
         <span>{project ? `${project.score.parts.length} bè · ${project.score.measures.length} ô nhịp` : 'Không có dự án'}</span>
         <span>Offline · không cần đăng nhập để soạn và phát</span>
@@ -238,7 +243,7 @@ export function App() {
         <div className="fixed inset-0 z-40 bg-accent/10 backdrop-blur-[2px] grid place-items-center pointer-events-none">
           <div className="rounded-2xl border-2 border-dashed border-accent bg-surface px-10 py-8 text-center hm-enter">
             <div className="font-semibold">Thả file để mở</div>
-            <div className="text-muted text-xs mt-1">MusicXML · MIDI · dự án Holy Melody</div>
+            <div className="text-muted text-xs mt-1">PDF · ảnh · MusicXML · MIDI · dự án Holy Melody</div>
           </div>
         </div>
       )}

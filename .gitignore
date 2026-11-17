@@ -19,3 +19,4 @@ apps/desktop/src-tauri/gen/
 scripts/preview/*.pdf
 apps/desktop/src-tauri/resources/audiveris/*
 !apps/desktop/src-tauri/resources/audiveris/README.txt
+scripts/preview/dist-sheet/

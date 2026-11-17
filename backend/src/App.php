@@ -88,6 +88,11 @@ final class App
         return new PaymentService($this->db, $this->wallet(), $gws, "$base/account/payment-return", "$base/account/payment-cancel");
     }
 
+    private function omr(): \HolyMelody\Omr\OmrConversionService
+    {
+        return new \HolyMelody\Omr\OmrConversionService($this->db, $this->wallet());
+    }
+
     private function ai(): AiJobService
     {
         return new AiJobService($this->db, $this->wallet(), $this->config->list('HM_AI_ENABLED_TYPES'));
@@ -273,6 +278,15 @@ final class App
             }
             $mime = ['wav' => 'audio/wav', 'mp3' => 'audio/mpeg', 'flac' => 'audio/flac', 'json' => 'application/json', 'mid' => 'audio/midi', 'musicxml' => 'application/vnd.recordare.musicxml+xml'][$o['format']] ?? 'application/octet-stream';
             return new Response(200, (string) file_get_contents($path), ['Content-Type' => $mime, 'Content-Disposition' => 'attachment; filename="holy-melody-' . (int) $req->params['id'] . '.' . $o['format'] . '"']);
+        }, [$user]);
+
+        // ---- chuyển bản nhạc ảnh/PDF sang chế độ biên tập (10 credit, một lần cho mỗi file gốc)
+        $r->add('GET', '/api/v1/omr/edit-price', fn () => ['credits' => $this->omr()->price()]);
+        $r->add('POST', '/api/v1/omr/edit-conversions', function (Request $req) {
+            $b = $req->json();
+            $out = $this->omr()->convert($req->auth['user_id'], (string) ($b['source_hash'] ?? ''), (string) ($b['title'] ?? ''),
+                (int) ($b['pages'] ?? 1), (int) ($b['measures'] ?? 0));
+            return Response::json($out + ['balance' => $this->wallet()->balance($req->auth['user_id'])], $out['replayed'] ? 200 : 201);
         }, [$user]);
 
         // ---- AI jobs

@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://api.holymelody.app ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://api.holymelody.app ipc: http://ipc.localhost"
     }
   },
   "bundle": {
@@ -74,8 +74,7 @@
       }
     },
     "resources": [
-      "resources/*",
-      "resources/audiveris/**/*"
+      "resources/**/*"
     ]
   }
 }

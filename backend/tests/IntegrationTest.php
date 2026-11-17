@@ -33,8 +33,10 @@ function testDb(): Db
         $m->query("DROP TABLE `{$row[0]}`");
     }
     $m->query('SET FOREIGN_KEY_CHECKS=1');
-    $m->multi_query((string) file_get_contents(dirname(__DIR__) . '/migrations/001_init.sql'));
-    while ($m->more_results() && $m->next_result()) {
+    foreach (glob(dirname(__DIR__) . '/migrations/*.sql') as $sql) {
+        $m->multi_query((string) file_get_contents($sql));
+        while ($m->more_results() && $m->next_result()) {
+        }
     }
     return $db = new Db($m);
 }
@@ -58,6 +60,25 @@ T::test('[DB] tài khoản mới nhận 100 credit đúng một lần, khóa the
     eq($s['user_id'], (int) $a['user']['id']);
     $auth->logout($s['session_id']);
     throwsCode(fn () => $auth->authenticate($a['token']), 'UNAUTHENTICATED');
+});
+
+T::test('[DB] chuyển sang Edit trừ 10 credit đúng một lần cho mỗi file gốc', function () {
+    $db = testDb();
+    $w = new WalletService($db);
+    $svc = new \HolyMelody\Omr\OmrConversionService($db, $w);
+    $uid = newUser($db, 'sub-OMR');
+    $h = str_repeat('ab', 32);
+    $a = $svc->convert($uid, $h, 'Bài A', 2, 32);
+    $b = $svc->convert($uid, strtoupper($h), 'Bài A', 2, 32);
+    ok(!$a['replayed'] && $b['replayed']);
+    eq($a['conversion_id'], $b['conversion_id']);
+    eq($w->balance($uid), 90);
+    $svc->convert($uid, str_repeat('cd', 32), 'Bài B', 1, 8);
+    eq($w->balance($uid), 80, 'file khác bị trừ riêng');
+    throwsCode(fn () => $svc->convert($uid, 'xyz', 'x', 1, 1), 'INVALID_SOURCE_HASH');
+    $w->apply($uid, -80, 'ai_charge', 'ai_job', 777, 'drain');
+    throwsCode(fn () => $svc->convert($uid, str_repeat('ef', 32), 'Bài C', 1, 1), 'INSUFFICIENT_CREDITS');
+    eq((int) $db->one('SELECT COUNT(*) c FROM omr_conversions WHERE user_id = ?', [$uid])['c'], 2, 'không còn bản ghi khi thiếu credit');
 });
 
 T::test('[DB] không thể âm credit; idempotency key không trừ hai lần', function () {

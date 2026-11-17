@@ -78,7 +78,10 @@ if (asset.name.endsWith('.deb')) {
 } else if (asset.name.endsWith('.dmg')) {
   const mnt = join(work, 'mnt');
   mkdirSync(mnt);
-  sh('hdiutil', ['attach', file, '-nobrowse', '-readonly', '-mountpoint', mnt]);
+  // .dmg của Audiveris có màn hình đồng ý giấy phép (SLA): chuyển sang ảnh đĩa thô để bỏ màn hình đó
+  const raw = join(work, 'raw.cdr');
+  sh('hdiutil', ['convert', file, '-quiet', '-format', 'UDTO', '-o', raw]);
+  execFileSync('sh', ['-c', `yes | hdiutil attach "${raw}" -nobrowse -readonly -noautoopen -mountpoint "${mnt}"`], { stdio: ['pipe', 'inherit', 'inherit'] });
   try {
     const app = readdirSync(mnt).find((n) => n.endsWith('.app'));
     if (!app) throw new Error('Không thấy .app trong .dmg');

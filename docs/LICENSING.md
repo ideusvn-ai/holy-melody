@@ -17,7 +17,7 @@ Trạng thái: **sơ bộ** — phải xác minh lại bằng file LICENSE của
 | rusqlite / SQLite | MIT / Public domain | Lưu dự án | Thấp |
 | music21 | BSD-3-Clause | AI worker (server) | Thấp |
 | MuseScore CLI | GPL-3.0 | Chỉ gọi tiến trình do người dùng tự cài; không phân phối kèm | Không link, không bundle |
-| Audiveris | AGPL-3.0 | Tiến trình riêng, tải riêng; hoặc chạy trên server phải công bố mã nguồn phần sửa đổi | **Cao** – cần quyết định pháp lý |
+| Audiveris 5.11 | AGPL-3.0 | **Đóng gói kèm bộ cài, nguyên vẹn, không sửa đổi**, chạy như chương trình riêng (gọi qua dòng lệnh, không liên kết mã). Bộ cài kèm `resources/audiveris/AUDIVERIS-NOTICE.txt` (giấy phép + liên kết mã nguồn đúng phiên bản). Nếu sau này SỬA Audiveris thì phải công bố mã nguồn phần sửa | Trung bình – nên để luật sư xác nhận cách "aggregate" này |
 | oemer / homr / SMT | Cần xác minh | Engine OMR ML trong worker | Kiểm tra cả giấy phép **trọng số mô hình** và dataset huấn luyện |
 | Font SMuFL Bravura | SIL OFL 1.1 | Nhúng vào app và PDF | Cho phép nhúng |
 | SoundFont (GeneralUser GS / FluidR3_GM) | Cần xác minh | Âm thanh mặc định | Kiểm tra quyền phân phối lại |

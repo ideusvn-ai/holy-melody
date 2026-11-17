@@ -1,7 +1,7 @@
 // Build bản preview của giao diện desktop bằng esbuild + Tailwind v4 (không cần Vite/npm install).
 import { build } from '/opt/npm-tools/node_modules/esbuild/lib/main.js';
 import { compile } from '/opt/npm-tools/node_modules/tailwindcss/dist/lib.mjs';
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, cpSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -26,6 +26,7 @@ await build({
     '@holy-melody/score-renderer': join(root, 'packages/score-renderer/src/index.ts'),
     '@tauri-apps/api/event': join(here, 'tauri-event-stub.js'),
     'react-dom/server': '/opt/npm-tools/node_modules/react-dom/server.browser.js',
+    'pdfjs-dist/build/pdf.worker.min.mjs?url': join(here, 'pdf-worker-url.js'),
   },
   define: { 'process.env.NODE_ENV': '"production"' },
   minify: false,
@@ -46,5 +47,8 @@ const tw = await compile(readFileSync(join(root, 'apps/desktop/src/styles.css'),
   },
 });
 writeFileSync(join(out, 'app.css'), tw.build([...candidates]));
+mkdirSync(join(out, 'pdfjs-dist/build'), { recursive: true });
+writeFileSync(join(out, 'pdfjs-dist/build/pdf.worker.min.mjs'), readFileSync('/opt/npm-tools/node_modules/pdfjs-dist/build/pdf.worker.min.mjs'));
+for (const d of ['wasm', 'standard_fonts', 'cmaps', 'iccs']) cpSync(join('/opt/npm-tools/node_modules/pdfjs-dist', d), join(out, 'pdfjs', d), { recursive: true });
 writeFileSync(join(out, 'index.html'), `<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Holy Melody</title><link rel="stylesheet" href="app.css"></head><body><div id="root"></div><script type="module" src="app.js"></script></body></html>`);
 console.log('preview built →', out);

@@ -149,3 +149,12 @@ export async function exportMxl(score: ScoreDocument): Promise<Uint8Array> {
     { name: 'score.musicxml', data: enc.encode(exportMusicXml(score)) },
   ]);
 }
+
+/** Đọc mọi file trong một gói zip (dùng cho dự án .holymelody có kèm file gốc) */
+export async function readZip(bytes: Uint8Array): Promise<Map<string, Uint8Array>> {
+  const out = new Map<string, Uint8Array>();
+  for (const e of readEntries(bytes)) out.set(e.name, await extract(bytes, e));
+  return out;
+}
+
+export const isZip = (b: Uint8Array) => b.length > 4 && b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04;

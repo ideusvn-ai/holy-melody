@@ -9,7 +9,7 @@
 1. Tải mã nguồn lên, ví dụ `~/holymelody/`.
 2. Trỏ **document root** của tên miền tới `apps/website/public/` (thư mục này phục vụ cả website và `/api/*`).
    Không đặt `backend/`, `.env` hay `storage/` trong document root.
-3. Tạo CSDL + người dùng riêng, chạy `backend/migrations/001_init.sql` (phpMyAdmin → Import).
+3. Tạo CSDL + người dùng riêng, chạy lần lượt `backend/migrations/001_init.sql`, `002_omr_edit.sql` (phpMyAdmin → Import).
 4. Sao chép `.env.example` → `backend/.env`, điền:
    - `HM_DB_*`, `HM_PUBLIC_URL`, `HM_CORS_ORIGINS` (thêm `tauri://localhost,http://tauri.localhost` cho app desktop)
    - `HM_GOOGLE_CLIENT_IDS` = Client ID **Web** và **Desktop** (Google Cloud Console → APIs & Services → Credentials)

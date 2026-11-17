@@ -17,7 +17,7 @@ use HolyMelody\InsufficientCreditsException;
  */
 final class WalletService
 {
-    public const TYPES = ['signup_bonus', 'purchase', 'ai_charge', 'ai_refund', 'admin_adjustment', 'reversal'];
+    public const TYPES = ['signup_bonus', 'purchase', 'ai_charge', 'ai_refund', 'admin_adjustment', 'reversal', 'omr_charge'];
 
     public function __construct(private readonly Db $db)
     {

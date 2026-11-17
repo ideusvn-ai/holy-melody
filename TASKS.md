@@ -22,7 +22,15 @@ Cập nhật: 2026-11-17. Ký hiệu: ✅ xong và đã kiểm chứng · 🟢 x
 | Trợ lý soạn nhạc (quy tắc, cấu trúc thánh ca, dấu thanh tiếng Việt) – chỉ gợi ý | ✅ |
 | Hợp âm thông minh cục bộ (3 phương án, 9 phong cách, preview/apply/undo) | ✅ |
 | Lời ca thông minh (dán đoạn lời, phiên khúc, font/cỡ/vị trí) | ✅ |
-| OMR qua Audiveris (cài riêng), tiến trình 10 bước, xác minh theo ô | 🟢 (cần người dùng cài Audiveris) |
+| Audiveris 5.11 đóng gói kèm bộ cài (macOS arm64/x64, Windows), không cần cài riêng | 🟢 CI tự tải + đóng gói |
+| Player mở ảnh/PDF: hiển thị bản gốc (PDF vẽ vector theo zoom) + lớp phủ nhận dạng để phát MIDI, tô sáng ô nhịp, con trỏ theo phách (tọa độ pixel từ .omr) | ✅ kiểm tra bằng kết quả Audiveris thật |
+| Màn hình chào: chỉ Tạo mới / Mở bản nhạc, không tạo sẵn score | ✅ |
+| Chuyển sang Edit: 10 credit/ file gốc (idempotent, máy chủ), Music Rule Validator (trường độ, dấu hoá, dấu nối, phân bè, liên âm, cấu trúc; không tự sửa ô lấy đà/cadenza/ký âm đặc biệt) | ✅ kiểm thử đơn vị + tích hợp CSDL trên CI |
+| Phát hiện vùng khó: điểm tin cậy của Audiveris theo ô, nghi sót hoá biểu (đo mực trên ảnh nhị phân) | ✅ kiểm thử trên mẫu thật |
+| Nhận dạng lại theo vùng (cắt dòng nhạc, phóng to/nhị phân hoá, chạy lại Audiveris, chỉ thay ô lỗi khi số lỗi giảm) | 🟢 chưa chạy thử trong app thật |
+| Đối chiếu thủ công: ảnh gốc từng ô ↔ kết quả, xác nhận/sửa/để sau; lưu kết quả + tọa độ trong dự án (.holymelody dạng zip kèm file gốc) | ✅ preview |
+| Mô hình AI riêng cho vùng khó (Legato/Flat) | ⏳ chưa có — điểm gắn sẵn ở bước nhận dạng lại vùng |
+| Đọc trực tiếp ký hiệu từ PDF vector (không cần OMR) | ⏳ ý tưởng, chưa làm |
 | Tự động lưu + lịch sử 50 phiên bản + khôi phục sau sự cố (SQLite) | 🟢 |
 | Đăng nhập Google (PKCE, loopback), token trong Keychain, số dư, lịch sử giao dịch | 🔑 cần `HM_API_URL`, Google Desktop Client ID/Secret (GitHub Secrets) |
 | AI Singer: tải bản nhạc, tạo job (idempotent), theo dõi, hủy/hoàn credit | 🔑 cần nhà cung cấp giọng hát tiếng Việt theo nốt; máy chủ khóa tính năng tới khi bật |

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMidiInput } from '../lib/midiInput';
 import { HighlightIndex, pitchToMidi, ScoreIndex } from '@holy-melody/music-core';
 import { ScoreView } from '../components/ScoreView';
+import { SheetView } from '../components/SheetView';
+import { ConvertDialog } from '../components/ConvertDialog';
 import { useActiveProject, useStore } from '../state/store';
 import { playbackPosition, usePlayback } from '../state/playback';
 
@@ -78,14 +80,18 @@ export function PlayerRight() {
   const pb = usePlayback();
   const setTab = useStore((s) => s.setTab);
   const selection = useStore((s) => s.selection);
+  const [convert, setConvert] = useState(false);
   if (!project) return null;
   const s = project.score;
   const hasSel = !!selection.measureRange || selection.noteIds.length > 0;
+  const overlay = s.sheet?.mode === 'overlay';
   return (
     <div className="p-3 space-y-4">
-      <button className="w-full h-10 rounded-lg bg-accent text-accent-fg font-semibold shadow-sm hover:brightness-110 active:scale-[0.99] transition" onClick={() => setTab('editor')}>
-        Edit in Score Editor
+      <button className="w-full h-10 rounded-lg bg-accent text-accent-fg font-semibold shadow-sm hover:brightness-110 active:scale-[0.99] transition" onClick={() => (overlay ? setConvert(true) : setTab('editor'))}>
+        {overlay ? 'Chuyển sang Edit · 10 credit' : 'Edit in Score Editor'}
       </button>
+      {overlay && <p className="text-[11px] text-muted -mt-2">Đang phát trên bản gốc. Chuyển sang Edit để dựng khuông nhạc và biên tập.</p>}
+      {convert && <ConvertDialog onClose={() => setConvert(false)} />}
       <section className="space-y-2">
         <h3 className="text-[11px] uppercase tracking-wide text-muted">Vùng chọn</h3>
         <div className="grid grid-cols-2 gap-1.5">
@@ -225,9 +231,20 @@ export function VirtualPiano() {
 }
 
 export function PlayerCenter() {
+  const project = useActiveProject();
+  const sheet = project?.score.sheet;
+  const [view, setView] = useState<'sheet' | 'score'>('sheet');
+  const showSheet = !!sheet && (sheet.mode === 'overlay' || view === 'sheet');
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      <ScoreView />
+      {sheet?.mode === 'edit' && (
+        <div className="flex gap-1 px-3 py-1 border-b border-line bg-surface text-[11.5px]" role="tablist">
+          {([['sheet', 'Bản gốc'], ['score', 'Khuông nhạc đã dựng']] as const).map(([id, label]) => (
+            <button key={id} role="tab" aria-selected={view === id} className={`h-7 px-3 rounded-md ${view === id ? 'bg-accent-soft font-medium' : 'text-muted hover:bg-surface-2'}`} onClick={() => setView(id)}>{label}</button>
+          ))}
+        </div>
+      )}
+      {showSheet ? <SheetView /> : <ScoreView />}
       <VirtualPiano />
     </div>
   );

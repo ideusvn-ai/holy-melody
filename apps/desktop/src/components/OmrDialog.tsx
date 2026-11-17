@@ -1,10 +1,10 @@
 /**
- * Nhận dạng bản nhạc từ ảnh/PDF bằng Audiveris (cài riêng). Hiển thị 10 bước, tiến trình thật từ Audiveris.
- * Kết quả luôn được đánh dấu "chưa xác minh" để người dùng kiểm tra trước khi phát/biên tập.
+ * Mở ảnh/PDF: Audiveris (đóng gói kèm) nhận dạng để tạo lớp phủ phát MIDI trên bản gốc. Hiển thị 10 bước,
+ * tiến trình thật từ Audiveris. Khuông nhạc đầy đủ chỉ được dựng khi người dùng "Chuyển sang Edit".
  */
 import { useEffect, useState } from 'react';
-import { importMxl, markAllUnverified } from '@holy-melody/music-core';
 import { tauriInvoke } from '../lib/fileio';
+import { openSheet } from '../lib/sheet';
 import { useStore } from '../state/store';
 
 const STEPS = [
@@ -12,7 +12,6 @@ const STEPS = [
   'Nhận dạng trường độ và dấu lặng', 'Nhận dạng nhịp và ô nhịp', 'Nhận dạng lời ca', 'Chuyển đổi sang MusicXML', 'Kiểm tra và hiển thị kết quả',
 ];
 
-type Listen = (event: string, cb: (e: { payload: { stage: number; line: string } }) => void) => Promise<() => void>;
 
 export function OmrDialog({ file, onClose }: { file: File; onClose: () => void }) {
   const st = useStore();
@@ -29,36 +28,32 @@ export function OmrDialog({ file, onClose }: { file: File; onClose: () => void }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const run = async () => {
-    if (!invoke) return;
     setRunning(true);
     setError(null);
     setStage(1);
-    let unlisten: (() => void) | undefined;
     try {
-      const { listen } = (await import('@tauri-apps/api/event')) as unknown as { listen: Listen };
-      unlisten = await listen('omr://progress', (e) => {
-        if (e.payload.stage) setStage((s) => Math.max(s, e.payload.stage));
-        setLine(e.payload.line.slice(0, 140));
+      const score = await openSheet(file, (stg, ln) => {
+        if (stg) setStage((x) => Math.max(x, stg));
+        setLine(ln.slice(0, 140));
       });
-      const path = (await invoke('omr_temp_input', { name: file.name })) as string;
-      await invoke('write_file', { path, contents: Array.from(new Uint8Array(await file.arrayBuffer())) });
-      const out = (await invoke('omr_run', { input: path })) as { mxlPath: string };
       setStage(10);
-      const bytes = new Uint8Array((await invoke('read_file', { path: out.mxlPath })) as number[]);
-      const score = await importMxl(bytes);
-      if (!score.meta.title || score.meta.title === 'Untitled') score.meta.title = file.name.replace(/\.[^.]+$/, '');
-      markAllUnverified(score);
       st.newProject(score, file.name);
-      st.setTab('editor');
-      st.notify('Đã nhận dạng xong. Các nốt màu nâu nhạt là chưa xác minh — hãy kiểm tra từng ô rồi bấm "Xác minh".');
+      st.setTab('player');
+      st.notify(score.sheet?.measures.length
+        ? 'Đã mở bản gốc. Bấm Phát để nghe, nốt đang phát được tô sáng ngay trên ảnh. Khi cần sửa: "Chuyển sang Edit".'
+        : 'Đã mở bản gốc và phát được, nhưng Audiveris không trả về tọa độ để tô sáng trên ảnh.');
       onClose();
     } catch (e) {
       setError(String((e as Error).message ?? e));
     } finally {
-      unlisten?.();
       setRunning(false);
     }
   };
+
+  // tự bắt đầu ngay khi có Audiveris (không bắt người dùng bấm thêm)
+  useEffect(() => {
+    if (engine?.found && stage === 0 && !running) void run();
+  }, [engine]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="fixed inset-0 z-50 bg-black/30 grid place-items-center" role="dialog" aria-label="Nhận dạng bản nhạc">
@@ -70,12 +65,8 @@ export function OmrDialog({ file, onClose }: { file: File; onClose: () => void }
         {!invoke && <p className="text-[13px]">Nhận dạng ảnh/PDF cần chạy trong ứng dụng desktop.</p>}
         {invoke && engine && !engine.found && (
           <div className="space-y-2 text-[13px]">
-            <p>Holy Melody dùng <b>Audiveris</b> (miễn phí, mã nguồn mở) để đọc bản nhạc từ ảnh và PDF quét. Audiveris được cài riêng vì dùng giấy phép AGPL.</p>
-            <ol className="list-decimal pl-5 space-y-1 text-[12px]">
-              <li>Tải bản cài cho máy bạn tại <code className="select-all bg-surface-2 px-1 rounded">{engine.downloadUrl}</code></li>
-              <li>Cài đặt như ứng dụng bình thường (giữ thư mục mặc định).</li>
-              <li>Quay lại đây và bấm <b>Kiểm tra lại</b>.</li>
-            </ol>
+            <p>Không tìm thấy <b>Audiveris</b> đi kèm bộ cài (có thể bộ cài bị hỏng hoặc đang chạy bản dựng thử). Hãy cài lại Holy Melody từ trang tải về.</p>
+            <p className="text-[12px] text-muted">Nếu muốn dùng Audiveris cài riêng: tải tại <code className="select-all bg-surface-2 px-1 rounded">{engine.downloadUrl}</code> rồi bấm Kiểm tra lại.</p>
             <button className="h-8 px-3 rounded-md border border-line hover:bg-surface-2" onClick={() => void (invoke('omr_detect') as Promise<typeof engine>).then(setEngine)}>Kiểm tra lại</button>
           </div>
         )}
@@ -96,7 +87,7 @@ export function OmrDialog({ file, onClose }: { file: File; onClose: () => void }
               })}
             </ol>
             {line && <p className="text-[10.5px] text-muted font-mono truncate">{line}</p>}
-            <p className="text-[11px] text-muted">Kết quả nhận dạng không thể chính xác 100%: các nốt sẽ được đánh dấu chưa xác minh để bạn kiểm tra và sửa trước khi phát.</p>
+            <p className="text-[11px] text-muted">Bản gốc được giữ nguyên để xem; lớp nhận dạng chỉ dùng để phát và tô sáng. Khuông nhạc đầy đủ được dựng khi bạn chọn "Chuyển sang Edit".</p>
           </>
         )}
         {error && <pre className="text-[11px] whitespace-pre-wrap bg-warn/10 text-warn rounded-md p-2 max-h-40 overflow-auto">{error}</pre>}
@@ -104,7 +95,7 @@ export function OmrDialog({ file, onClose }: { file: File; onClose: () => void }
           <button className="h-9 px-4 rounded-md border border-line hover:bg-surface-2" onClick={onClose} disabled={running}>Đóng</button>
           {invoke && engine?.found && (
             <button className="h-9 px-4 rounded-md bg-accent text-accent-fg font-semibold disabled:opacity-50" onClick={() => void run()} disabled={running}>
-              {running ? 'Đang nhận dạng…' : error ? 'Thử lại' : 'Bắt đầu nhận dạng'}
+              {running ? 'Đang nhận dạng…' : error ? 'Thử lại' : 'Mở bản nhạc'}
             </button>
           )}
         </footer>

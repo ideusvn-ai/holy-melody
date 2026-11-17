@@ -1,6 +1,8 @@
-//! Nhận dạng bản nhạc (OMR) bằng Audiveris chạy như một chương trình độc lập do người dùng cài
-//! (AGPL-3.0 → không nhúng vào Holy Melody). Tiến trình được báo về UI qua sự kiện `omr://progress`.
-use serde::Serialize;
+//! Nhận dạng bản nhạc (OMR) bằng Audiveris. Audiveris (AGPL-3.0) được ĐÓNG GÓI KÈM bộ cài Holy Melody
+//! (resources/audiveris, xem AUDIVERIS-NOTICE.txt) và chạy như một chương trình độc lập; nếu máy đã cài
+//! Audiveris riêng thì cũng dùng được. Tiến trình được báo về UI qua sự kiện `omr://progress`.
+use serde::{Deserialize, Serialize};
+use tauri::Manager;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -10,6 +12,8 @@ use tauri::{AppHandle, Emitter};
 #[serde(rename_all = "camelCase")]
 pub struct OmrEngineInfo {
     found: bool,
+    /// true khi dùng bản Audiveris đóng gói kèm Holy Melody
+    bundled: bool,
     path: Option<String>,
     download_url: &'static str,
 }
@@ -26,15 +30,42 @@ pub struct OmrProgress {
 #[serde(rename_all = "camelCase")]
 pub struct OmrOutput {
     mxl_path: String,
+    /// Dự án Audiveris (.omr): chứa tọa độ pixel chính xác của ô nhịp/nốt trên ảnh gốc
+    omr_path: Option<String>,
     log_tail: Vec<String>,
 }
 
 const DOWNLOAD: &str = "https://github.com/Audiveris/audiveris/releases";
 
-fn candidates() -> Vec<PathBuf> {
+#[derive(Deserialize)]
+struct Manifest {
+    exe: String,
+}
+
+/// Audiveris đóng gói kèm trong thư mục tài nguyên của ứng dụng
+fn bundled(app: &AppHandle) -> Option<PathBuf> {
+    let base = app.path().resource_dir().ok()?.join("resources").join("audiveris");
+    let m: Manifest = serde_json::from_slice(&std::fs::read(base.join("manifest.json")).ok()?).ok()?;
+    let exe = base.join(m.exe);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(md) = std::fs::metadata(&exe) {
+            if md.permissions().mode() & 0o111 == 0 {
+                let _ = std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755));
+            }
+        }
+    }
+    Some(exe)
+}
+
+fn candidates(app: &AppHandle) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = Vec::new();
     if let Ok(p) = std::env::var("HM_AUDIVERIS") {
         v.push(PathBuf::from(p));
+    }
+    if let Some(p) = bundled(app) {
+        v.push(p);
     }
     #[cfg(target_os = "macos")]
     {
@@ -66,14 +97,15 @@ fn candidates() -> Vec<PathBuf> {
     v
 }
 
-fn find() -> Option<PathBuf> {
-    candidates().into_iter().find(|p| p.is_file())
+fn find(app: &AppHandle) -> Option<PathBuf> {
+    candidates(app).into_iter().find(|p| p.is_file())
 }
 
 #[tauri::command]
-pub fn omr_detect() -> OmrEngineInfo {
-    let p = find();
-    OmrEngineInfo { found: p.is_some(), path: p.map(|p| p.display().to_string()), download_url: DOWNLOAD }
+pub fn omr_detect(app: AppHandle) -> OmrEngineInfo {
+    let p = find(&app);
+    let bundled = p.is_some() && p == bundled(&app);
+    OmrEngineInfo { found: p.is_some(), bundled, path: p.map(|p| p.display().to_string()), download_url: DOWNLOAD }
 }
 
 /// Ánh xạ các bước của Audiveris sang 10 bước của Holy Melody
@@ -109,22 +141,52 @@ fn find_mxl(dir: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Chạy Audiveris ở chế độ batch và trả về đường dẫn file .mxl kết quả
+fn find_ext(dir: &Path, ext: &str) -> Option<PathBuf> {
+    for e in std::fs::read_dir(dir).ok()?.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            if let Some(f) = find_ext(&p, ext) {
+                return Some(f);
+            }
+        } else if p.extension().and_then(|x| x.to_str()) == Some(ext) {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Chạy Audiveris ở chế độ batch và trả về đường dẫn file .mxl kết quả.
+/// `options`: các cặp `khoá=giá trị` truyền qua `-option` (dùng khi nhận dạng lại một vùng với cấu hình khác).
+/// `job`: tên thư mục kết quả riêng, để nhiều lần chạy (theo vùng) không ghi đè nhau.
 #[tauri::command]
-pub async fn omr_run(app: AppHandle, input: String) -> Result<OmrOutput, String> {
-    let exe = find().ok_or("Chưa cài Audiveris. Tải miễn phí tại github.com/Audiveris/audiveris/releases rồi thử lại.")?;
+pub async fn omr_run(app: AppHandle, input: String, options: Option<Vec<String>>, job: Option<String>) -> Result<OmrOutput, String> {
+    let exe = find(&app).ok_or("Không tìm thấy Audiveris đóng gói kèm. Hãy cài lại Holy Melody.")?;
     let input = PathBuf::from(input);
     if !input.is_file() {
         return Err("Không tìm thấy file cần nhận dạng".into());
     }
-    let out_dir = std::env::temp_dir().join(format!("holy-melody-omr-{}", std::process::id()));
+    let job: String = job.unwrap_or_else(|| "main".into()).chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+    let out_dir = std::env::temp_dir().join(format!("holy-melody-omr-{}-{job}", std::process::id()));
     let _ = std::fs::remove_dir_all(&out_dir);
     std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
 
     tauri::async_runtime::spawn_blocking(move || {
-        let mut child = Command::new(&exe)
+        let mut cmd = Command::new(&exe);
+        cmd.env("JAVA_TOOL_OPTIONS", "-Djava.awt.headless=true");
+        for o in options.unwrap_or_default() {
+            if o.contains('=') && !o.contains(char::is_whitespace) {
+                cmd.arg("-option").arg(o);
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: không bật cửa sổ console
+        }
+        let mut child = cmd
             .arg("-batch")
             .arg("-export")
+            .arg("-save")
             .arg("-output")
             .arg(&out_dir)
             .arg("--")
@@ -168,7 +230,8 @@ pub async fn omr_run(app: AppHandle, input: String) -> Result<OmrOutput, String>
         match (status.success(), mxl) {
             (_, Some(p)) => {
                 let _ = app.emit("omr://progress", OmrProgress { stage: 10, line: "Hoàn tất".into() });
-                Ok(OmrOutput { mxl_path: p.display().to_string(), log_tail: tail })
+                let omr = find_ext(&out_dir, "omr").map(|p| p.display().to_string());
+                Ok(OmrOutput { mxl_path: p.display().to_string(), omr_path: omr, log_tail: tail })
             }
             (ok, None) => Err(format!(
                 "Audiveris {} nhưng không tạo được MusicXML. Ảnh có thể quá mờ, nghiêng hoặc không phải bản nhạc.\n{}",
