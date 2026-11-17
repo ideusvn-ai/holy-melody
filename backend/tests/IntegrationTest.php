@@ -163,31 +163,25 @@ T::test('[DB] webhook thanh toán lặp lại chỉ cộng credit một lần; s
 });
 
 T::test('[DB] trừ credit song song (5 tiến trình) không làm số dư âm', function () {
-    if (!function_exists('pcntl_fork')) {
-        throw new SkipTest('không có pcntl');
-    }
+    // 5 tiến trình PHP ĐỘC LẬP (không fork: tiến trình con thoát sẽ đóng kết nối MySQL dùng chung của cha)
     $db = testDb();
     $uid = newUser($db, 'sub-F'); // 100 credit
-    $pids = [];
+    $script = tempnam(sys_get_temp_dir(), 'hmrace') . '.php';
+    file_put_contents($script, '<?php
+require ' . var_export(dirname(__DIR__) . '/src/bootstrap.php', true) . ';
+$m = new mysqli(getenv("HM_TEST_DB_HOST"), getenv("HM_TEST_DB_USER"), (string) getenv("HM_TEST_DB_PASS"), getenv("HM_TEST_DB_NAME"), (int) (getenv("HM_TEST_DB_PORT") ?: 3306));
+$w = new HolyMelody\\Wallet\\WalletService(new HolyMelody\\Db($m));
+try { $w->apply((int) $argv[1], -30, "ai_charge", "ai_job", 50000 + (int) $argv[2], "race-" . $argv[2]); exit(0); } catch (Throwable $e) { exit(1); }
+');
+    $procs = [];
     for ($i = 0; $i < 5; $i++) {
-        $pid = pcntl_fork();
-        if ($pid === 0) {
-            $m = new mysqli((string) getenv('HM_TEST_DB_HOST'), (string) getenv('HM_TEST_DB_USER'), (string) getenv('HM_TEST_DB_PASS'), (string) getenv('HM_TEST_DB_NAME'), (int) (getenv('HM_TEST_DB_PORT') ?: 3306));
-            $w = new WalletService(new Db($m));
-            try {
-                $w->apply($uid, -30, 'ai_charge', 'ai_job', 50000 + $i, "race-$i");
-                exit(0);
-            } catch (\Throwable) {
-                exit(1);
-            }
-        }
-        $pids[] = $pid;
+        $procs[] = proc_open([PHP_BINARY, $script, (string) $uid, (string) $i], [], $pipes);
     }
     $ok = 0;
-    foreach ($pids as $p) {
-        pcntl_waitpid($p, $status);
-        $ok += pcntl_wexitstatus($status) === 0 ? 1 : 0;
+    foreach ($procs as $p) {
+        $ok += proc_close($p) === 0 ? 1 : 0;
     }
+    @unlink($script);
     eq($ok, 3, 'chỉ 3 lần trừ 30 thành công từ 100');
     eq((new WalletService($db))->balance($uid), 10);
 });
