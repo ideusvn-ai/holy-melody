@@ -55,6 +55,8 @@ jobs:
         with: { name: logs-check, path: ci-logs/, retention-days: 7 }
 
   omr-probe:
+    # đo Audiveris: chỉ chạy khi bấm tay (tiết kiệm phút Actions)
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -75,7 +77,6 @@ jobs:
         include:
           - { name: macos-apple-silicon, os: macos-latest, target: aarch64-apple-darwin, audiveris: macos-arm64 }
           - { name: macos-intel, os: macos-15-intel, target: x86_64-apple-darwin, audiveris: macos-x64 }
-          - { name: windows-x64, os: windows-latest, target: x86_64-pc-windows-msvc, audiveris: windows-x64 }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
