@@ -231,6 +231,8 @@ export interface LayoutSettings {
   staffSpacing: number;
   systemSpacing: number;
   measuresPerSystem?: number;
+  /** Chỉ xuống dòng ở các ngắt dòng có sẵn (bố cục theo bản gốc ảnh/PDF), không tự ngắt theo bề rộng */
+  exactBreaks?: boolean;
   firstSystemIndentMm: number;
   preset: 'compact' | 'standard' | 'professional' | 'hymnal' | 'choir' | 'lead-sheet';
   showPageNumbers: boolean;

@@ -83,7 +83,7 @@ final class OmrAiService
             . 'khớp chính xác bản gốc. Chỉ trả về MỘT khối <score-partwise>…</score-partwise> MusicXML 4.0 hoàn chỉnh, không giải thích.';
         $text = "Ảnh là MỘT dòng nhạc (system) cắt từ bản nhạc in/quét. Bên dưới là MusicXML phần mềm OMR đọc được cho đúng dòng này.\n"
             . ($review
-                ? "Rà soát TOÀN BỘ dòng: cao độ, trường độ, chấm dôi, dấu hoá (kể cả hoá biểu), dấu nối, liên ba, khoá nhạc, số chỉ nhịp, phân bè, lời ca (tiếng Việt có dấu, đúng âm tiết dưới từng nốt).\n"
+                ? "Rà soát TOÀN BỘ dòng cho GIỐNG HỆT bản gốc: cao độ, trường độ, chấm dôi, dấu lặng, dấu hoá (kể cả hoá biểu), dấu nối, dấu luyến, liên ba, khoá nhạc, số chỉ nhịp, phân bè và hướng đuôi nốt, ký hiệu hợp âm phía trên (<harmony>), sắc thái, dấu nhắc lại, lời ca (tiếng Việt có dấu, đúng âm tiết dưới từng nốt).\n"
                 : 'Các ô nhịp (số thứ tự trong dòng, bắt đầu từ 1) ' . json_encode($measures) . " bị nghi đọc sai (trường độ, sót/thừa nốt, cao độ, dấu hoá, khoá, hoá biểu).\n")
             . "Ngữ cảnh: $ctx.\nYêu cầu: giữ NGUYÊN số bè (part) và số ô nhịp; giữ <divisions>; tổng trường độ mỗi ô khớp số chỉ nhịp (trừ ô lấy đà); "
             . "không bịa ký hiệu không có trong ảnh; giữ các phần đã đúng.\n\n$xml";

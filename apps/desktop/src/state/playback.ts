@@ -57,6 +57,14 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   waiting: false,
 
   async play(fromTick) {
+    const sh = activeSheet();
+    const tl0 = useStore.getState().timeline;
+    if (sh?.pending && !sh.pending.error && (!tl0 || !tl0.spans.length)) {
+      // file vừa mở, đang nhận dạng: nhận lệnh phát ngay, tự phát khi có nốt đầu tiên
+      waitingAt = WAIT_FIRST;
+      set({ waiting: true });
+      return;
+    }
     try {
       await engine.play(fromTick);
       set({ status: engine.status() });
@@ -170,6 +178,7 @@ function reload(tl: PlaybackTimeline | null) {
  * nhận dạng xong phần tiếp theo thì tự phát tiếp đúng chỗ đó (nốt mới nạp thẳng vào engine, không qua file .mid).
  */
 let waitingAt: number | null = null;
+const WAIT_FIRST = -1;
 const activeSheet = () => {
   const st = useStore.getState();
   return st.projects.find((p) => p.id === st.activeId)?.score.sheet;
@@ -180,8 +189,10 @@ useStore.subscribe((s, prev) => {
   if (s.timeline === prev.timeline) return;
   reload(s.timeline);
   if (waitingAt !== null && s.timeline) {
-    if (s.timeline.totalTicks > waitingAt + 1) {
-      const at = waitingAt;
+    // WAIT_FIRST: bấm Phát ngay khi vừa mở file, chưa có nốt nào → phát từ đầu khi nhận dạng xong dòng nhạc đầu tiên
+    const ready = waitingAt === WAIT_FIRST ? s.timeline.spans.length > 0 : s.timeline.totalTicks > waitingAt + 1;
+    if (ready) {
+      const at = waitingAt === WAIT_FIRST ? 0 : waitingAt;
       waitingAt = null;
       usePlayback.setState({ waiting: false });
       void usePlayback.getState().play(at);

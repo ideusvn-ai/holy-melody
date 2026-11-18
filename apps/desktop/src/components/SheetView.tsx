@@ -4,7 +4,7 @@
  * Bấm vào ô nhịp để phát từ đó. Nhận dạng chạy nền: kết quả về dần theo trang.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { cursorX, HighlightIndex, measureAtTick, measureTicks, type SheetSource } from '@holy-melody/music-core';
+import { cursorX, HighlightIndex, measureAtTick, measureTicks, ScoreIndex, type SheetSource } from '@holy-melody/music-core';
 import { useActiveProject, useStore } from '../state/store';
 import { markSelectionPlayed, playbackPosition, usePlayback } from '../state/playback';
 import { OMR_STEPS, useOmrProgress } from '../state/omrProgress';
@@ -49,6 +49,8 @@ export function SheetView() {
     return m;
   }, [project]);
 
+  const sidx = useMemo(() => (project ? new ScoreIndex(project.score) : null), [project, tl]);
+
   // ---- mỗi khung hình: tìm nốt đang vang → làm sáng đầu nốt trên ảnh gốc
   useEffect(() => {
     if (!tl || !hi || !project || !sheet) return;
@@ -78,19 +80,28 @@ export function SheetView() {
           continue;
         }
         const [first, n] = partStaff.get(s.partId) ?? [0, 99];
-        for (let st = first; st < first + n; st++) keys.add(`${pm.measureIndex}|${s.startTick - pm.startTick}|${st}`);
+        // khuông của nốt (bè piano có 2 khuông): chỉ tìm đầu nốt trên đúng khuông đó
+        const ev = sidx?.note(s.noteId)?.event;
+        const own = ev && ev.staff >= 1 && ev.staff <= n ? first + ev.staff - 1 : -1;
+        const tol = Math.min(120, Math.max(15, Math.floor((s.endTick - s.startTick) / 2)));
+        for (let st = first; st < first + n; st++) if (own < 0 || st === own) keys.add(`${pm.measureIndex}|${s.startTick - pm.startTick}|${st}|${tol}`);
       }
       const key = [...keys].sort().join(',');
       if (key !== lastKey) {
         lastKey = key;
         const perPage = new Map<number, string[]>();
         for (const k of keys) {
-          const [mi, rel, st] = k.split('|').map(Number);
+          const [mi, rel, st, tol] = k.split('|').map(Number);
           const g = byMeasure.get(mi!);
           if (!g?.heads) continue;
           const a = aspectOf(g.page);
+          // phách của đầu nốt do Audiveris gán có thể lệch chút so với nốt (liên ba, nốt chấm, sau khi sửa ô):
+          // lấy đầu nốt gần nhất trên khuông này, trong ngưỡng nửa trường độ nốt
+          let best = Infinity;
+          for (const h of g.heads) if (h[1] === st && Math.abs(h[0] - rel!) < Math.abs(best - rel!)) best = h[0];
+          if (!Number.isFinite(best) || Math.abs(best - rel!) > tol!) continue;
           for (const h of g.heads) {
-            if (h[0] !== rel || h[1] !== st) continue;
+            if (h[0] !== best || h[1] !== st) continue;
             const pad = h[4] * 0.35;
             const list = perPage.get(g.page) ?? [];
             list.push(`<ellipse cx="${h[2] + h[4] / 2}" cy="${(h[3] + h[5] / 2) * a}" rx="${h[4] / 2 + pad}" ry="${(h[5] / 2) * a + pad}" />`);
@@ -125,7 +136,7 @@ export function SheetView() {
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [tl, hi, project, sheet, byMeasure, partStaff]);
+  }, [tl, hi, project, sheet, byMeasure, partStaff, sidx]);
 
   // ---- chọn nốt bằng cách bấm đầu nốt: chọn các nốt bắt đầu tại phách đó (đúng bè/khuông), Play phát từ đó
   const selIds = useStore((s) => s.selection.noteIds);

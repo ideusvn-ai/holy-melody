@@ -50,3 +50,15 @@ test('nhịp 3/4: kiểu valse (bass phách 1, hợp âm phách 2–3)', () => {
   assert.deepEqual(rel, [0, 480, 960]);
   assert.ok(inM.filter((n) => n.tick === pm.startTick).every((n) => n.pitch < 53), 'phách 1 chỉ có bass');
 });
+
+test('chỉ phát MIDI (không hoà âm): không có đệm, không dạo đầu; vẫn đếm vào nếu bật', async () => {
+  const { buildScore } = await import('./helpers.js');
+  const { accompany, buildTimeline, DEFAULT_PLAYER_SETTINGS, chordsForAccompaniment } = await import('../src/index.js');
+  const s = buildScore([{ name: 'S', measures: ['C4:q E4:q G4:q C5:q', 'D4:q F4:q A4:q D5:q', 'C4:w'] }]);
+  const base = buildTimeline(s);
+  const tl = accompany(s, base, { ...DEFAULT_PLAYER_SETTINGS, harmony: false }, chordsForAccompaniment(s));
+  assert.equal(tl.notes.filter((n) => n.partId === '__acc').length, 0);
+  assert.equal(tl.preroll.introTicks, 0);
+  assert.ok(tl.preroll.countInTicks > 0);
+  assert.equal(tl.notes.filter((n) => n.partId !== '__click').length, base.notes.length);
+});

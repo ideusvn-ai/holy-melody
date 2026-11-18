@@ -161,7 +161,7 @@ export function layoutScore(score: ScoreDocument, opts: LayoutOptions): ScoreLay
   const first = layoutOnce(score, opts);
   // Tránh hệ thống cuối chỉ có một ô nhịp: chia đều số ô cho các hệ thống
   const n = first.systems.length;
-  if (!opts.measuresPerSystem && n > 1 && first.systems[n - 1]!.measures.length === 1 && score.measures.length > 2) {
+  if (!opts.measuresPerSystem && !score.layout?.exactBreaks && n > 1 && first.systems[n - 1]!.measures.length === 1 && score.measures.length > 2) {
     const balanced = layoutOnce(score, { ...opts, measuresPerSystem: Math.ceil(score.measures.length / n) });
     if (balanced.systems.length === n) return balanced;
   }
@@ -245,7 +245,10 @@ function layoutOnce(score: ScoreDocument, opts: LayoutOptions): ScoreLayout {
     const start = mi;
     let w = headerW(mi, first);
     const maxN = opts.measuresPerSystem ?? Infinity;
-    while (mi < score.measures.length && (mi === start || (w + natural[mi]! <= usable && mi - start < maxN && !score.measures[mi]!.systemBreak))) {
+    // bố cục theo bản gốc (ảnh/PDF): chỉ xuống dòng đúng chỗ bản gốc xuống dòng, co giãn ô cho vừa
+    const exact = !!score.layout?.exactBreaks && score.measures.some((m) => m.systemBreak || m.pageBreak);
+    const brk = (k: number) => !!(score.measures[k]!.systemBreak || score.measures[k]!.pageBreak);
+    while (mi < score.measures.length && (mi === start || (exact ? !brk(mi) : w + natural[mi]! <= usable && mi - start < maxN && !brk(mi)))) {
       w += natural[mi]!;
       mi++;
     }

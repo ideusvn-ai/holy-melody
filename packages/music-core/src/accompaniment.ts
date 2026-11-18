@@ -25,9 +25,11 @@ export interface PlayerSettings {
   transpose: number;
   intro: boolean;
   countIn: boolean;
+  /** Phát kèm hoà âm (đệm hợp âm + dạo đầu); false = chỉ phát MIDI giai điệu của bản nhạc */
+  harmony?: boolean;
 }
 
-export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = { program: null, melodyVolume: 0.85, chordVolume: 0.6, transpose: 0, intro: true, countIn: true };
+export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = { program: null, melodyVolume: 0.85, chordVolume: 0.6, transpose: 0, intro: true, countIn: true, harmony: true };
 
 export interface Preroll {
   /** Độ dài phần dạo đầu (tick) */
@@ -190,7 +192,8 @@ export function accompany(score: ScoreDocument, base: PlaybackTimeline, s: Playe
     }
   };
   const lastIndex = base.measures.length - 1;
-  if (s.chordVolume > 0 && abs.length) {
+  const harmony = s.harmony !== false;
+  if (harmony && s.chordVolume > 0 && abs.length) {
     base.measures.forEach((pm, k) => {
       const len = pm.endTick - pm.startTick;
       const nominal = nominalMeasureTicks(score, pm.measureIndex);
@@ -228,7 +231,7 @@ export function accompany(score: ScoreDocument, base: PlaybackTimeline, s: Playe
 
   const intro: MidiNoteEvent[] = [];
   let introTicks = 0;
-  if (s.intro && base.measures.length) {
+  if (harmony && s.intro && base.measures.length) {
     // câu cuối bài: 2 ô cuối (giai điệu + đệm)
     const tail = base.measures.length >= 6 ? base.measures.slice(-2) : [];
     if (tail.length) {

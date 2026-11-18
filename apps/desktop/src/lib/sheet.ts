@@ -709,6 +709,7 @@ export async function convertToEdit(
   let aiImproved = 0;
   let aiLyrics = 0;
   let aiNote = '';
+  let keysFixed = 0;
   const diffs: OmrSignal[] = [];
   let aiDead = false;
   const lyricPart = score.parts.find((p) => Object.values(p.content).some((vs) => vs.some((v) => v.events.some((e) => e.kind === 'chord' && e.lyrics.length)))) ?? score.parts[0];
@@ -716,7 +717,7 @@ export async function convertToEdit(
   if (useAi && ai && asset && !isCancelled()) {
     let done = 0;
     onProgress({ phase: 'ai', done: 0, total: systemsAll.length, text: `AI đọc lời ca và rà soát ${systemsAll.length} dòng nhạc…` });
-    await pool(systemsAll, AI_CONCURRENCY, async (sys) => {
+    const reviewSystem = async (sys: number) => {
       if (aiDead) return;
       const geoms = sh().measures.filter((x) => x.system === sys).sort((a, b) => a.measureIndex - b.measureIndex);
       const box = regionOf(geoms);
@@ -746,6 +747,14 @@ export async function convertToEdit(
       if (rev) {
         try {
           const src = importMusicXml(rev.musicxml);
+          // hoá biểu: Audiveris hay sót (đã có dấu hiệu KEY_SUSPECT) mà AI đọc được → áp dụng, giữ đúng bản gốc
+          const aiKey = keyAt(src, 0);
+          const curKey = keyAt(score, order[0]!);
+          const suspect = (score.sheet?.signals ?? []).some((x) => x.code === 'KEY_SUSPECT' && order.includes(x.measureIndex));
+          if (suspect && aiKey.fifths !== 0 && aiKey.fifths !== curKey.fifths) {
+            exec(applyMissedKey(order[0]!, aiKey.fifths, aiKey.mode));
+            keysFixed++;
+          }
           if (src.measures.length === order.length) {
             const trial: ScoreDocument = JSON.parse(JSON.stringify(score));
             const cmd = replaceMeasuresFrom(trial, src, order, order, `ai:${rev.model}`);
@@ -775,7 +784,10 @@ export async function convertToEdit(
         }
       }
       onProgress({ phase: 'ai', done: ++done, total: systemsAll.length, text: `AI đã rà soát ${done}/${systemsAll.length} dòng…` });
-    }, isCancelled);
+    };
+    // dòng đầu trước (hoá biểu, khoá nhạc áp dụng cho cả bài), rồi các dòng còn lại song song
+    if (systemsAll.length && !isCancelled()) await reviewSystem(systemsAll[0]!);
+    await pool(systemsAll.slice(1), AI_CONCURRENCY, reviewSystem, isCancelled);
     // lời ca: phân bổ theo từng dòng, theo thứ tự (mỗi dòng bắt đầu từ nốt đầu tiên của dòng)
     if (lyricPart && lyricResults.size) {
       for (const sys of systemsAll) {
@@ -879,4 +891,28 @@ function toBase64(b: Uint8Array): string {
   let bin = '';
   for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode(...b.subarray(i, i + 0x8000));
   return btoa(bin);
+}
+
+let warmed = false;
+/**
+ * Làm nóng Audiveris ngay sau khi mở ứng dụng: chạy một ảnh rất nhỏ để Java và thư viện nhận dạng được nạp vào bộ nhớ đệm
+ * của hệ điều hành → lần mở bản nhạc đầu tiên không phải chờ khởi động nguội (thường 2–5 giây trên máy vừa bật).
+ */
+export async function warmUpOmr(): Promise<void> {
+  const invoke = tauriInvoke();
+  if (warmed || !invoke) return;
+  warmed = true;
+  try {
+    const st = (await invoke('omr_detect')) as { found?: boolean } | null;
+    if (!st?.found) return;
+    const c = document.createElement('canvas');
+    c.width = 240;
+    c.height = 120;
+    const ctx = c.getContext('2d')!;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, c.width, c.height);
+    await runAudiverisFull('warmup.png', await canvasToPng(c), { job: 'warmup' }).catch(() => undefined);
+  } catch {
+    /* không quan trọng */
+  }
 }

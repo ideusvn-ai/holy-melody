@@ -329,6 +329,28 @@ export const recordReview = (review: MeasureReview): Command => ({
   },
 });
 
+/**
+ * Giữ nguyên bố cục của bản gốc: ô nhịp nào bắt đầu một dòng nhạc (hệ thống) / một trang trên ảnh gốc thì
+ * cũng bắt đầu dòng / trang trong Editor — số ô mỗi dòng, số dòng mỗi trang giống hệt bản chính.
+ */
+export function applyOriginalLayout(s: ScoreDocument): void {
+  const geo = [...(s.sheet?.measures ?? [])].sort((a, b) => a.measureIndex - b.measureIndex);
+  if (!geo.length) return;
+  for (const m of s.measures) {
+    m.systemBreak = undefined;
+    m.pageBreak = undefined;
+  }
+  let prev = geo[0]!;
+  for (const g of geo.slice(1)) {
+    const m = s.measures[g.measureIndex];
+    if (!m) continue;
+    if (g.page !== prev.page) m.pageBreak = true;
+    else if (g.system !== prev.system) m.systemBreak = true;
+    prev = g;
+  }
+  s.layout = { ...s.layout, exactBreaks: true };
+}
+
 /** Chuyển bản nhạc ảnh/PDF sang chế độ biên tập (sau khi đã trừ credit) */
 export const enterEditMode = (conversion: NonNullable<SheetSource['conversion']>, issues: RuleIssue[]): Command => ({
   label: 'Chuyển sang Edit',
@@ -337,6 +359,7 @@ export const enterEditMode = (conversion: NonNullable<SheetSource['conversion']>
     if (!s.sheet) return;
     s.sheet.mode = 'edit';
     s.sheet.conversion = conversion;
+    applyOriginalLayout(s);
     for (const i of issues) {
       if (s.sheet.reviews[i.measureId]) continue;
       const g = s.sheet.measures.find((x) => x.measureIndex === i.measureIndex);

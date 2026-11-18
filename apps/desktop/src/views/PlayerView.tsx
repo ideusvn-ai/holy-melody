@@ -13,10 +13,17 @@ import { useActiveProject, useStore } from '../state/store';
 import { playbackPosition, usePlayback } from '../state/playback';
 import { useAccount } from '../state/account';
 
-/** Panel trái của Player: chỉ Tempo, "Chuyển sang Editor" và "Xuất nhạc" (MIDI / MIDI + đệm đàn) */
+/** Nhạc cụ phát (GM program 0-based); null = theo bản nhạc */
+const INSTRUMENTS: [number | null, string][] = [
+  [null, 'Theo bản nhạc'], [0, 'Piano'], [19, 'Organ nhà thờ'], [16, 'Organ điện'], [52, 'Hợp xướng (Aah)'], [53, 'Giọng hát (Ooh)'],
+  [48, 'Dàn dây'], [40, 'Violin'], [42, 'Cello'], [73, 'Sáo'], [71, 'Clarinet'], [24, 'Guitar'], [46, 'Đàn hạc'],
+];
+
+/** Panel trái của Player: Chuyển sang Editor · cách phát (chỉ MIDI / kèm hoà âm) · nhạc cụ · âm lượng · transpose · tempo · xuất nhạc */
 export function PlayerLeft() {
   const project = useActiveProject();
   const player = useStore((s) => s.player);
+  const setPlayer = useStore((s) => s.setPlayer);
   const notify = useStore((s) => s.notify);
   const pb = usePlayback();
   const [convert, setConvert] = useState(false);
@@ -27,7 +34,11 @@ export function PlayerLeft() {
   const baseBpm = s.tempoMap[0]?.bpm ?? 90;
   const bpm = Math.round(baseBpm * pb.speed);
   const label = 'block text-[11px] uppercase tracking-wide text-muted mb-1.5';
+  const range = 'w-full accent-[var(--accent)]';
+  const pct = (v: number) => `${Math.round(v * 100)}%`;
   const pending = !!s.sheet?.pending;
+  const harmony = player.harmony !== false;
+  const seg = (on: boolean) => `flex-1 h-8 rounded-md text-[12px] font-medium transition ${on ? 'bg-accent text-accent-fg shadow-sm' : 'hover:bg-surface-2 text-muted'}`;
 
   const exportMusic = async (withAccompaniment: boolean) => {
     setBusy(true);
@@ -52,8 +63,49 @@ export function PlayerLeft() {
       {convert && <ConvertDialog onClose={() => setConvert(false)} />}
 
       <section>
+        <span className={label}>Khi phát</span>
+        <div className="flex gap-1 p-1 rounded-lg border border-line" role="radiogroup" aria-label="Cách phát">
+          <button role="radio" aria-checked={!harmony} className={seg(!harmony)} onClick={() => setPlayer({ harmony: false })}>Chỉ MIDI</button>
+          <button role="radio" aria-checked={harmony} className={seg(harmony)} onClick={() => setPlayer({ harmony: true })}>MIDI + hoà âm</button>
+        </div>
+      </section>
+
+      <section>
+        <label className={label} htmlFor="pl-instr">Nhạc cụ</label>
+        <select id="pl-instr" className="w-full h-9 rounded-md border border-line bg-surface px-2" value={player.program ?? ''}
+          onChange={(e) => setPlayer({ program: e.target.value === '' ? null : Number(e.target.value) })}>
+          {INSTRUMENTS.map(([prog, name]) => <option key={String(prog)} value={prog ?? ''}>{name}</option>)}
+        </select>
+      </section>
+
+      <section>
+        <span className={label}>Âm lượng MIDI <span className="float-right normal-case tabular-nums">{pct(player.melodyVolume)}</span></span>
+        <input type="range" min={0} max={1} step={0.01} value={player.melodyVolume} className={range} aria-label="Âm lượng MIDI"
+          onChange={(e) => setPlayer({ melodyVolume: Number(e.target.value) })} />
+      </section>
+
+      {harmony && (
+        <section>
+          <span className={label}>Âm lượng hoà âm <span className="float-right normal-case tabular-nums">{player.chordVolume ? pct(player.chordVolume) : 'Tắt'}</span></span>
+          <input type="range" min={0} max={1} step={0.01} value={player.chordVolume} className={range} aria-label="Âm lượng hoà âm"
+            onChange={(e) => setPlayer({ chordVolume: Number(e.target.value) })} />
+          <label className="flex items-center gap-1.5 mt-1.5 text-[11.5px] text-muted"><input type="checkbox" checked={player.intro} onChange={(e) => setPlayer({ intro: e.target.checked })} /> Dạo đầu</label>
+        </section>
+      )}
+      <label className="flex items-center gap-1.5 -mt-3 text-[11.5px] text-muted"><input type="checkbox" checked={player.countIn} onChange={(e) => setPlayer({ countIn: e.target.checked })} /> Đếm vào trước khi phát</label>
+
+      <section>
+        <span className={label}>Transpose phát</span>
+        <div className="flex items-center gap-2">
+          <button className="h-9 w-9 rounded-md border border-line hover:bg-surface-2 text-[16px]" onClick={() => setPlayer({ transpose: Math.max(-12, player.transpose - 1) })} aria-label="Hạ nửa cung">−</button>
+          <span className="flex-1 text-center tabular-nums font-medium">{player.transpose > 0 ? `+${player.transpose}` : player.transpose} <span className="text-muted font-normal">nửa cung</span></span>
+          <button className="h-9 w-9 rounded-md border border-line hover:bg-surface-2 text-[16px]" onClick={() => setPlayer({ transpose: Math.min(12, player.transpose + 1) })} aria-label="Nâng nửa cung">+</button>
+        </div>
+      </section>
+
+      <section>
         <span className={label}>Tempo <span className="float-right normal-case tabular-nums">♩ = {bpm}{pb.speed !== 1 && <button className="ml-2 underline text-muted" onClick={() => pb.setSpeed(1)}>gốc {baseBpm}</button>}</span></span>
-        <input type="range" min={0.4} max={2} step={0.01} value={pb.speed} className="w-full accent-[var(--accent)]" aria-label="Tempo"
+        <input type="range" min={0.4} max={2} step={0.01} value={pb.speed} className={range} aria-label="Tempo"
           onChange={(e) => pb.setSpeed(Number(e.target.value))} />
       </section>
 
@@ -63,7 +115,7 @@ export function PlayerLeft() {
           <button className="h-9 rounded-md border border-line hover:bg-surface-2 disabled:opacity-40" disabled={busy || pending} onClick={() => void exportMusic(false)}>MIDI</button>
           <button className="h-9 rounded-md border border-line hover:bg-surface-2 disabled:opacity-40" disabled={busy || pending} onClick={() => void exportMusic(true)}>MIDI + đệm đàn</button>
         </div>
-        <p className="text-[11px] text-muted mt-1.5">Theo tempo đang chọn.{pending ? ' Chờ nhận dạng xong để xuất đủ bài.' : ''}</p>
+        <p className="text-[11px] text-muted mt-1.5">Theo tempo, nhạc cụ và transpose đang chọn.{pending ? ' Chờ nhận dạng xong để xuất đủ bài.' : ''}</p>
       </section>
     </div>
   );
@@ -73,8 +125,8 @@ export function PlayerLeft() {
 export function playerMidi(score: ScoreDocument, withAccompaniment: boolean, settings: PlayerSettings, speed: number): Uint8Array {
   const base = buildTimeline(score);
   const tl = withAccompaniment
-    ? accompany(score, base, { ...settings, countIn: false, chordVolume: settings.chordVolume || DEFAULT_PLAYER_SETTINGS.chordVolume }, chordsForAccompaniment(score))
-    : base;
+    ? accompany(score, base, { ...settings, harmony: true, countIn: false, chordVolume: settings.chordVolume || DEFAULT_PLAYER_SETTINGS.chordVolume }, chordsForAccompaniment(score))
+    : accompany(score, base, { ...settings, harmony: false, countIn: false, intro: false }, []);
   const scaled = speed === 1 ? tl : { ...tl, tempo: tl.tempo.map((t) => ({ ...t, bpm: t.bpm * speed })) };
   return writeMidiFile(timelineToMidiFile(scaled, score.meta.title));
 }

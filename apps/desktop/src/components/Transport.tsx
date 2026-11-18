@@ -12,6 +12,10 @@ export function Transport({ compact = false, onOpenFull }: { compact?: boolean; 
   const hasSel = useStore((s) => !!s.selection.measureRange || s.selection.noteIds.length > 0);
   // Player: tempo chỉ ở panel trái (một chỗ duy nhất)
   const inPlayer = useStore((s) => s.tab === 'player');
+  const sheetPending = useStore((s) => {
+    const sh = s.projects.find((p) => p.id === s.activeId)?.score.sheet;
+    return !!sh?.pending && !sh.pending.error;
+  });
   const [pos, setPos] = useState(0);
   const barRef = useRef<HTMLDivElement>(null);
 
@@ -47,10 +51,10 @@ export function Transport({ compact = false, onOpenFull }: { compact?: boolean; 
         <button className={btn} title="Ô trước (,)" onClick={() => pb.stepMeasure(-1)} disabled={!tl}><IconPrev /></button>
         <button
           className="h-10 w-10 grid place-items-center rounded-full bg-accent text-accent-fg shadow-sm hover:brightness-110 active:scale-95 transition disabled:opacity-40"
-          title="Phát / Tạm dừng (Space)" onClick={() => pb.toggle()} disabled={!tl || !tl.notes.length}
-          aria-label={pb.status === 'playing' ? 'Tạm dừng' : 'Phát'}
+          title="Phát / Tạm dừng (Space)" onClick={() => pb.toggle()} disabled={!tl || (!tl.notes.length && !sheetPending)}
+          aria-label={pb.status === 'playing' || pb.waiting ? 'Tạm dừng' : 'Phát'}
         >
-          {pb.status === 'playing' ? <IconPause size={18} /> : <IconPlay size={18} />}
+          {pb.waiting ? <span className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" /> : pb.status === 'playing' ? <IconPause size={18} /> : <IconPlay size={18} />}
         </button>
         <button className={btn} title="Dừng" onClick={() => pb.stop()} disabled={!tl}><IconStop /></button>
         <button className={btn} title="Ô sau (.)" onClick={() => pb.stepMeasure(1)} disabled={!tl}><IconNext /></button>

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useActiveProject, useStore, type MainTab } from './state/store';
 import { usePlayback } from './state/playback';
 import { detectKind, exportMidiFile, exportMusicXmlFile, importFile, saveProject } from './lib/fileio';
-import { openSheet } from './lib/sheet';
+import { openSheet, warmUpOmr } from './lib/sheet';
 import { useOmrProgress } from './state/omrProgress';
 import { AccountMenu } from './components/AccountMenu';
 import { listRecoverable, markClean, recover, startAutosave, type Recoverable } from './lib/autosave';
@@ -37,6 +37,12 @@ export function App() {
   const project = useActiveProject();
   const fileInput = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
+
+  // ---- làm nóng bộ nhận dạng ngay khi mở app → mở bản nhạc đầu tiên nhanh hơn
+  useEffect(() => {
+    const t = setTimeout(() => void warmUpOmr(), 1200);
+    return () => clearTimeout(t);
+  }, []);
 
   // ---- theme & giảm chuyển động
   useEffect(() => {

@@ -46,3 +46,11 @@ test('tránh chồng: hợp âm quãng 2 lệch đầu nốt, dấu hoá xếp c
   const acc = ev[2]!.heads.map((h) => h.accX!);
   assert.ok(acc[0]! < acc[1]! - L.sp * 0.8, 'hai dấu thăng không đè nhau');
 });
+
+test('bố cục theo bản gốc: xuống dòng đúng chỗ ngắt dòng, kể cả khi dòng chật', () => {
+  const s = buildScore([{ name: 'S', measures: Array.from({ length: 9 }, () => 'C4:e D4:e E4:e F4:e G4:e A4:e B4:e C5:e') }]);
+  s.layout = { ...s.layout, exactBreaks: true };
+  s.measures[6]!.systemBreak = true;
+  const L = layoutScore(s, { width: 700 });
+  assert.deepEqual(L.systems.map((x) => x.measures.length), [6, 3]);
+});

@@ -158,8 +158,7 @@ export const useStore = create<State>((set, get) => {
     setInputDuration(inputDuration) {
       set({ inputDuration });
     },
-    // Player chỉ còn Tempo: các cài đặt khác dùng mặc định (đệm đàn, dạo đầu, đếm vào)
-    player: { ...DEFAULT_PLAYER_SETTINGS },
+    player: { ...DEFAULT_PLAYER_SETTINGS, ...(prefs.player ?? {}) },
     setPlayer(patch) {
       set({ player: { ...get().player, ...patch } });
       savePrefs(get());
