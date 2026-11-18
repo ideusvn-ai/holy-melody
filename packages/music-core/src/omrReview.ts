@@ -14,7 +14,7 @@ import { newId } from './ids.js';
 export type RuleCode =
   | 'UNDERFULL' | 'OVERFULL' | 'TIE_BROKEN' | 'TIE_ORPHAN' | 'ACCIDENTAL_UNUSUAL' | 'ACCIDENTAL_DENSE'
   | 'VOICE_STAFF' | 'PART_MISSING' | 'DUP_PITCH' | 'EMPTY_CHORD' | 'RANGE' | 'TUPLET_INCOMPLETE' | 'LOW_CONFIDENCE'
-  | 'KEY_SUSPECT' | 'LOW_GRADE';
+  | 'KEY_SUSPECT' | 'LOW_GRADE' | 'AI_DIFF';
 
 export type SpecialNotation = 'pickup' | 'cadenza' | 'irregular';
 

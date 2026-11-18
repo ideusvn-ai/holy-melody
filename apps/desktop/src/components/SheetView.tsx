@@ -185,7 +185,7 @@ export function SheetView() {
         </label>
         <div className="flex-1" />
         {sheet.mode === 'overlay' ? (
-          <button className="h-7 px-3 rounded-md bg-accent text-accent-fg font-semibold disabled:opacity-40 shrink-0" disabled={!!pending} onClick={() => setConvert(true)}>Chuyển sang Edit · 10 credit</button>
+          <button className="h-7 px-3 rounded-md bg-accent text-accent-fg font-semibold disabled:opacity-40 shrink-0" disabled={!!pending} onClick={() => setConvert(true)}>Chuyển sang Editor</button>
         ) : (
           <button className="h-7 px-3 rounded-md border border-line hover:bg-surface-2 shrink-0" onClick={() => useStore.getState().setTab('editor')}>Mở Score Editor</button>
         )}

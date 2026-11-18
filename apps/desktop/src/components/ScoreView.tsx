@@ -4,7 +4,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type MouseEvent as RMouseEvent } from 'react';
 import { durationTicks, HighlightIndex, keyFifthsAt, measureAtTick, measureTicks, pitchFromStaffStep, pitchToMidi, placeNote, setLyricStyle, type Pitch } from '@holy-melody/music-core';
-import { layoutScore, type EventBox, type ScoreLayout } from '@holy-melody/score-renderer';
+import { HEAD_W, layoutScore, type EventBox, type ScoreLayout } from '@holy-melody/score-renderer';
 import type { ScoreDocument } from '@holy-melody/music-core';
 import { useActiveProject, useStore } from '../state/store';
 import { CountIn } from './CountIn';
@@ -445,13 +445,15 @@ function EventGlyph({ box, sp, selNotes, flagged, onNoteClick, lyric, unverified
   const staffBottom = box.staffY + sp * 4;
   if (ev.kind === 'rest') {
     if (ev.hidden) return null;
-    const mid = box.staffY + sp * 2;
+    // nhiều bè trên một khuông: dấu lặng bè 1 nâng lên, bè 2 hạ xuống để không đè nốt bè kia
+    const vdy = box.multiVoice && !ev.measureRest ? (box.voice % 2 === 1 ? -sp * 2 : sp * 2) : 0;
+    const mid = box.staffY + sp * 2 + vdy;
     const t = ev.measureRest ? 'whole' : ev.duration.type;
     return (
       <g id={ev.id} fill="currentColor" className={`hm-rest ${selNotes.has(ev.id) ? 'hm-selected' : ''}`} onClick={(e) => onNoteClick(e, '', ev.id)}>
         <rect x={box.x - sp * 0.4} y={box.staffY} width={sp * 2} height={sp * 4} fill="transparent" />
         {/* dấu lặng SMuFL: lặng tròn treo dưới dòng 4, các dấu khác đặt trên dòng giữa */}
-        <text x={box.x} y={t === 'whole' ? box.staffY + sp : mid} fontSize={sp * 4} fontFamily="Bravura">{SMUFL_REST[t] ?? SMUFL_REST.quarter}</text>
+        <text x={box.x} y={t === 'whole' ? box.staffY + sp + vdy : mid} fontSize={sp * 4} fontFamily="Bravura">{SMUFL_REST[t] ?? SMUFL_REST.quarter}</text>
         {ev.duration.dots > 0 && <circle cx={box.x + sp * 1.9} cy={mid - sp * 0.5} r={1.4} />}
       </g>
     );
@@ -465,6 +467,7 @@ function EventGlyph({ box, sp, selNotes, flagged, onNoteClick, lyric, unverified
   const stemY2 = box.stemEnd;
   const flags = box.beamed ? 0 : box.beams;
   const scale = ev.grace ? 0.65 : 1;
+  const dotX = Math.max(...heads.map((h) => h.x)) + (HEAD_W / 2 + 0.55) * sp * scale;
 
   return (
     <g>
@@ -478,18 +481,17 @@ function EventGlyph({ box, sp, selNotes, flagged, onNoteClick, lyric, unverified
           aria-label="Nốt nhạc"
         >
           {h.ledger.map((l) => (
-            <line key={l} x1={box.x - sp * 1.1} x2={box.x + sp * 1.1} y1={staffBottom - (l * sp) / 2} y2={staffBottom - (l * sp) / 2} stroke="currentColor" strokeWidth={0.9} />
+            <line key={l} x1={h.x - sp * 1.05 * scale} x2={h.x + sp * 1.05 * scale} y1={staffBottom - (l * sp) / 2} y2={staffBottom - (l * sp) / 2} stroke="currentColor" strokeWidth={0.9} />
           ))}
-          {h.accidental && <text x={box.x - sp * 0.75 - sp * 0.3} y={h.y} fontSize={sp * 4 * scale} textAnchor="end" fontFamily="Bravura" fill="currentColor">{SMUFL_ACC[h.accidental] ?? h.accidental}</text>}
-          <ellipse
-            className="hm-head"
-            cx={box.x} cy={h.y} rx={sp * 0.66 * scale} ry={sp * 0.47 * scale}
-            transform={`rotate(-20 ${box.x} ${h.y})`}
-            fill={filled ? 'currentColor' : 'var(--paper)'}
-            stroke="currentColor" strokeWidth={filled ? 0 : 1.4}
-          />
-          {ev.duration.dots > 0 && <circle cx={box.x + sp * 1.3} cy={h.staffPos % 2 === 0 ? h.y - sp / 2 : h.y} r={1.5} fill="currentColor" />}
-          <rect x={box.x - sp} y={h.y - sp * 0.7} width={sp * 2} height={sp * 1.4} fill="transparent" />
+          {h.accidental && <text x={h.accX ?? box.x - sp * 1.05} y={h.y} fontSize={sp * 4 * scale} textAnchor="end" fontFamily="Bravura" fill="currentColor">{SMUFL_ACC[h.accidental] ?? h.accidental}</text>}
+          {/* đầu nốt Bravura (SMuFL): đen / trắng / tròn */}
+          <text className="hm-head" x={h.x - (ev.duration.type === 'whole' ? 0.84 : HEAD_W / 2) * sp * scale} y={h.y} fontSize={sp * 4 * scale} fontFamily="Bravura" fill="currentColor">
+            {ev.duration.type === 'whole' ? '\uE0A2' : filled ? '\uE0A4' : '\uE0A3'}
+          </text>
+          {ev.duration.dots > 0 && Array.from({ length: ev.duration.dots }, (_, d) => (
+            <circle key={d} cx={dotX + d * sp * 0.6} cy={h.staffPos % 2 === 0 ? h.y - sp / 2 : h.y} r={sp * 0.2} fill="currentColor" />
+          ))}
+          <rect x={h.x - sp} y={h.y - sp * 0.7} width={sp * 2} height={sp * 1.4} fill="transparent" />
         </g>
       ))}
       {hasStem && <line className="hm-stem" x1={stemX} x2={stemX} y1={stemY1} y2={stemY2} stroke="currentColor" strokeWidth={1.1} pointerEvents="none" />}

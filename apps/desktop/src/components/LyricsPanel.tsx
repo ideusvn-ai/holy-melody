@@ -4,7 +4,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import {
-  distributeLyrics, lyricsToText, nudgeLyric, planLyrics, ScoreIndex, setLyric, setLyricStyle, versesOf,
+  distributeLyrics, lyricsToText, nudgeLyric, planLyrics, ScoreIndex, setLyric, setLyricStyle, shiftLyrics, versesOf,
 } from '@holy-melody/music-core';
 import { useActiveProject, useStore } from '../state/store';
 
@@ -55,6 +55,25 @@ export function LyricsPanel() {
     setOffset(L?.lyricOffsetSp ?? 3);
     setSpacing(L?.lyricVerseSpacingSp ?? 2.2);
   }, [L?.lyricFontSizePt, L?.lyricOffsetSp, L?.lyricVerseSpacingSp]);
+
+  const shift = (direction: 1 | -1) => {
+    if (!selEvent || !pid) return;
+    try {
+      st.exec(shiftLyrics({ partId: pid, verse, fromEventId: selEvent.event.id, direction }));
+    } catch (e) {
+      st.notify(String((e as Error).message ?? e), 'error');
+    }
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft')) return;
+      if ((e.target as HTMLElement).closest('input,textarea,select')) return;
+      e.preventDefault();
+      shift(e.key === 'ArrowRight' ? 1 : -1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
 
   if (!project || !score || !L) return null;
   const sel = 'w-full h-8 rounded-md border border-line bg-surface px-2';
@@ -166,6 +185,13 @@ export function LyricsPanel() {
               }}
               onBlur={(e) => { if (e.target.value !== (curLyric?.text ?? '')) st.exec(setLyric(selEvent.event.id, verse, e.target.value)); }}
             />
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] text-muted mr-auto" title="Dời âm tiết đang chọn và TẤT CẢ âm tiết phía sau đi một nốt">Dời cả đoạn sau</span>
+              <button className="h-7 px-2 rounded border border-line hover:bg-surface-2 text-[11.5px]" title="Lùi 1 nốt (Alt+←)"
+                onClick={() => shift(-1)}>◀ Lùi 1 nốt</button>
+              <button className="h-7 px-2 rounded border border-line hover:bg-surface-2 text-[11.5px]" title="Đẩy sang nốt sau (Alt+→)"
+                onClick={() => shift(1)}>Đẩy 1 nốt ▶</button>
+            </div>
             <div className="flex items-center gap-1.5">
               <span className="text-[11px] text-muted mr-auto">Dịch ngang{curLyric?.offsetX ? ` (${curLyric.offsetX > 0 ? '+' : ''}${curLyric.offsetX})` : ''}</span>
               <button className="h-7 w-8 rounded border border-line hover:bg-surface-2 disabled:opacity-40" disabled={!curLyric} onClick={() => st.exec(nudgeLyric(selEvent.event.id, verse, -0.25))} aria-label="Dịch trái">←</button>

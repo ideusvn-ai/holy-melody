@@ -19,5 +19,6 @@ apps/desktop/src-tauri/gen/
 scripts/preview/*.pdf
 apps/desktop/src-tauri/resources/audiveris/*
 !apps/desktop/src-tauri/resources/audiveris/README.txt
+apps/desktop/src-tauri/resources/tessdata/
 scripts/preview/dist-sheet/
 dist-web/

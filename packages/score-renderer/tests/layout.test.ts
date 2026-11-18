@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { importMusicXml, ScoreIndex } from '../../music-core/src/index.js';
-import { layoutScore, staffPosition } from '../src/index.js';
+import { HEAD_W, layoutScore, staffPosition } from '../src/index.js';
+import { buildScore } from '../../music-core/tests/helpers.js';
 
 const hymn = importMusicXml(readFileSync(new URL('../../music-core/tests/fixtures/hymn-satb-vi.musicxml', import.meta.url), 'utf8'));
 
@@ -34,3 +35,14 @@ for (const width of [560, 900, 1300]) {
     }
   });
 }
+
+test('tránh chồng: hợp âm quãng 2 lệch đầu nốt, dấu hoá xếp cột', () => {
+  const s = buildScore([{ name: 'S', measures: ['C4+D4:q E4+F4+G4:q F#4+G#4:q -:q'] }]);
+  const L = layoutScore(s, { width: 900 });
+  const ev = L.events.filter((e) => e.heads.length);
+  const dx = (i: number) => ev[i]!.heads.map((h) => Math.round(h.x - ev[i]!.x));
+  assert.deepEqual(dx(0), [0, Math.round(HEAD_W * L.sp)]);
+  assert.deepEqual(dx(1), [0, Math.round(HEAD_W * L.sp), 0]);
+  const acc = ev[2]!.heads.map((h) => h.accX!);
+  assert.ok(acc[0]! < acc[1]! - L.sp * 0.8, 'hai dấu thăng không đè nhau');
+});

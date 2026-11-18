@@ -18,7 +18,12 @@ interface AccountState {
   apiUrl: string | null;
   user: AccountUser | null;
   balance: number | null;
+  /** tài khoản quản trị: dùng mọi tính năng không giới hạn credit */
+  unlimited: boolean;
+  /** giá chuyển một bản nhạc sang Editor (máy chủ quyết định) */
+  editPrice: number | null;
   busy: boolean;
+  loadEditPrice(): Promise<number>;
   init(): Promise<void>;
   login(): Promise<void>;
   logout(): Promise<void>;
@@ -34,7 +39,19 @@ export const useAccount = create<AccountState>((set, get) => ({
   apiUrl: null,
   user: null,
   balance: null,
+  unlimited: false,
+  editPrice: null,
   busy: false,
+
+  async loadEditPrice() {
+    try {
+      const r = await get().api<{ credits: number }>('GET', '/api/v1/omr/edit-price');
+      set({ editPrice: r.credits });
+      return r.credits;
+    } catch {
+      return get().editPrice ?? 50;
+    }
+  },
 
   async init() {
     const invoke = tauriInvoke();
@@ -51,8 +68,8 @@ export const useAccount = create<AccountState>((set, get) => ({
     const invoke = tauriInvoke();
     if (!invoke || !get().configured) return;
     try {
-      const me = (await invoke('account_me')) as { user: AccountUser; balance: number } | null;
-      set({ user: me?.user ?? null, balance: me?.balance ?? null });
+      const me = (await invoke('account_me')) as { user: AccountUser; balance: number; unlimited?: boolean } | null;
+      set({ user: me?.user ?? null, balance: me?.balance ?? null, unlimited: !!me?.unlimited });
     } catch {
       /* mất mạng: giữ trạng thái cũ */
     }
@@ -66,6 +83,7 @@ export const useAccount = create<AccountState>((set, get) => ({
     try {
       const res = (await invoke('account_login')) as { user: AccountUser; balance: number };
       set({ user: res.user, balance: res.balance });
+      await get().refresh();
     } finally {
       set({ busy: false });
     }
@@ -74,7 +92,7 @@ export const useAccount = create<AccountState>((set, get) => ({
   async logout() {
     const invoke = tauriInvoke();
     if (invoke) await invoke('account_logout');
-    set({ user: null, balance: null });
+    set({ user: null, balance: null, unlimited: false });
   },
 
   async api<T>(method: string, path: string, body?: unknown, idempotencyKey?: string): Promise<T> {

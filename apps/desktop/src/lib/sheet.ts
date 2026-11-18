@@ -2,11 +2,11 @@
  * Bản nhạc mở từ ảnh/PDF.
  *  - Player: hiển thị TRANG GỐC (PDF vẽ dạng vector bằng pdf.js theo mức zoom; ảnh hiển thị trực tiếp) và một
  *    lớp phủ lấy từ MusicXML của Audiveris để phát MIDI + tô sáng. Chưa dựng khuông nhạc.
- *  - "Chuyển sang Edit" (10 credit, một lần cho mỗi file gốc): Validator → nhận dạng lại các vùng lỗi → dựng khuông
+ *  - "Chuyển sang Edit" (50 credit, admin miễn phí, một lần cho mỗi file gốc): Validator → nhận dạng lại các vùng lỗi → dựng khuông
  *    nhạc đầy đủ → người dùng đối chiếu từng ô với ảnh gốc, kết quả + tọa độ lưu vĩnh viễn trong dự án.
  */
 import {
-  applyMissedKey, autoFixIssues, concatScores, exportMusicXml, keyAt, replaceRecognition, sliceScore, timeSigAt, estimateInterline, fastOmrScale, createScore, hasExplicitTime, newId, difficulty, enterEditMode, extractOmrGeometry, extractOmrSignals, reviewIssues, type OmrSignal, type SheetMeasureGeom, extractSheetGeometry, readZip, importMusicXml, markAllUnverified, readMxl,
+  applyMissedKey, autoFixIssues, distributeLyrics, lyricTargetsIn, concatScores, exportMusicXml, keyAt, replaceRecognition, sliceScore, timeSigAt, estimateInterline, fastOmrScale, createScore, hasExplicitTime, newId, difficulty, enterEditMode, extractOmrGeometry, extractOmrSignals, reviewIssues, type OmrSignal, type SheetMeasureGeom, extractSheetGeometry, readZip, importMusicXml, markAllUnverified, readMxl,
   regionOf, replaceMeasuresFrom, validateMusic, type RuleIssue, type ScoreDocument, type SheetBox, type SheetSource,
 } from '@holy-melody/music-core';
 import { tauriInvoke } from './fileio';
@@ -500,67 +500,204 @@ export interface ConvertResult {
   regionsImproved: number;
   aiTried: number;
   aiImproved: number;
+  /** số dòng AI đọc được lời ca */
+  aiLyrics: number;
+  /** số ô AI đọc khác Audiveris (đưa vào bảng Đối chiếu) */
+  aiDiffs: number;
   /** Lý do bỏ qua AI (chưa cấu hình, hết lượt…) */
   aiNote: string;
 }
 
-/** Số ô nhịp/ hệ thống tối đa nhận dạng lại trong một lần chuyển (mỗi vùng mất ~15–40 giây) */
+/** Số dòng nhạc tối đa nhận dạng lại bằng Audiveris trong một lần chuyển (mỗi vùng ~8–20 giây) */
 const MAX_REGIONS = 12;
+/** Số yêu cầu AI chạy song song */
+const AI_CONCURRENCY = 4;
 
-/** Gọi AI đọc lại một dòng nhạc (máy chủ). Trả về null nếu AI chưa bật / lỗi — khi đó bỏ qua bước AI. */
-export type AiRegionCall = (req: { image_png_base64: string; musicxml: string; measures: number[]; context: Record<string, unknown> }) => Promise<{ musicxml: string; model: string } | null>;
+/** Gọi AI đọc lại một dòng nhạc (máy chủ, OpenAI). mode 'review' = rà soát toàn dòng. */
+export type AiRegionCall = (req: { image_png_base64: string; musicxml: string; measures: number[]; context: Record<string, unknown>; mode?: 'region' | 'review' }) => Promise<{ musicxml: string; model: string } | null>;
+/** Gọi AI đọc lời ca (tiếng Việt) của một dòng nhạc: các lời, mỗi lời là danh sách âm tiết */
+export type AiLyricsCall = (req: { image_png_base64: string; notes: number }) => Promise<{ verses: string[][]; model: string } | null>;
 
+/** Chuỗi đặc trưng nốt của một ô (để so AI với Audiveris) */
+function measurePrint(score: ScoreDocument, mi: number): string {
+  const m = score.measures[mi];
+  if (!m) return '';
+  return score.parts.map((p) => (p.content[m.id] ?? []).map((v) => v.events.map((e) =>
+    e.kind === 'chord' ? `${e.notes.map((n) => `${n.pitch.step}${n.pitch.alter}${n.pitch.octave}`).sort().join('+')}/${e.duration.type}${e.duration.dots}` : `r/${e.kind === 'rest' ? e.duration.type : ''}`,
+  ).join(' ')).join('|')).join('||');
+}
+
+async function pool<T>(items: T[], n: number, fn: (x: T, i: number) => Promise<void>, stop: () => boolean): Promise<void> {
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
+    while (next < items.length && !stop()) {
+      const i = next++;
+      await fn(items[i]!, i);
+    }
+  }));
+}
+
+/**
+ * "Chuyển sang Editor":
+ *  1. trừ credit (máy chủ, một lần cho mỗi file gốc; admin miễn phí);
+ *  2. trang nào chưa nhận dạng được (hoặc không có AI) → nhận dạng kỹ ở độ phân giải gốc, OCR tiếng Việt;
+ *  3. Music Rule Validator + tự sửa lỗi an toàn;
+ *  4. AI (OpenAI) chạy song song theo từng dòng nhạc: đọc LỜI CA tiếng Việt + RÀ SOÁT toàn dòng so với ảnh gốc.
+ *     Nốt: chỉ nhận khi số lỗi quy tắc GIẢM; ô AI đọc khác nhưng không chứng minh được ai đúng → đưa vào "Đối chiếu".
+ *     Không có AI → nhận dạng lại theo vùng bằng Audiveris với cấu hình khác;
+ *  5. dựng khuông nhạc + danh sách ô cần đối chiếu.
+ */
 export async function convertToEdit(
   score: ScoreDocument,
   exec: (cmd: import('@holy-melody/music-core').Command) => void,
   charge: () => Promise<{ credits: number; transaction_id: number | null; created_at: string }>,
   onProgress: (p: ConvertProgress) => void,
   isCancelled: () => boolean,
-  ai?: AiRegionCall,
+  ai?: { region: AiRegionCall; lyrics?: AiLyricsCall; enabled: boolean },
 ): Promise<ConvertResult> {
   const sheet = score.sheet;
   if (!sheet) throw new Error('Bản nhạc này không mở từ ảnh/PDF');
   const asset = getSheetAsset(score.id);
+  const useAi = !!ai?.enabled;
 
-  // 1. trừ credit (máy chủ, idempotent theo file gốc)
-  onProgress({ phase: 'charge', done: 0, total: 1, text: 'Xác nhận 10 credit với máy chủ…' });
+  // 1. trừ credit
+  onProgress({ phase: 'charge', done: 0, total: 1, text: 'Xác nhận credit với máy chủ…' });
   const conv: NonNullable<SheetSource['conversion']> = sheet.conversion ?? (await charge().then((c) => ({ at: c.created_at, credits: c.credits, transactionId: c.transaction_id ?? undefined })));
 
-  // 1b. NHẬN DẠNG KỸ: Player chỉ dùng bản nhanh (ảnh thu nhỏ); Editor chạy lại ở độ phân giải gốc, có lời ca
-  if (sheet.omrMode !== 'full' && asset && tauriInvoke() && !isCancelled()) {
-    onProgress({ phase: 'full', done: 0, total: 1, text: 'Nhận dạng kỹ ở độ phân giải gốc (có lời ca)…' });
+  // 2. phần còn thiếu: trang chưa nhận dạng được (Player) → nhận dạng kỹ; không có AI → chạy kỹ cả bài để có lời ca (OCR tiếng Việt)
+  const recognizedPages = new Set(sheet.measures.map((g) => g.page));
+  const missingPages = sheet.pages.map((_, i) => i).filter((i) => !recognizedPages.has(i));
+  const needFull = sheet.omrMode !== 'full' && (missingPages.length > 0 || !useAi || !sheet.measures.length);
+  if (needFull && asset && tauriInvoke() && !isCancelled()) {
+    onProgress({ phase: 'full', done: 0, total: 1, text: missingPages.length && sheet.measures.length
+      ? `Nhận dạng tiếp ${missingPages.length} trang còn thiếu ở độ phân giải gốc…` : 'Nhận dạng kỹ ở độ phân giải gốc (đọc lời ca tiếng Việt)…' });
     try {
-      const r = await runAudiverisFull(sheet.fileName, asset.bytes, { job: 'full' });
+      const r = await runAudiverisFull(sheet.fileName, asset.bytes, { job: 'full', options: [VIE_OCR] });
       const keys = [...r.sheets.keys()].sort((a, b) => a - b);
       const sx = keys.map((k) => r.sheets.get(k)!);
       const full = buildSheetScore([r.xml], sx.length ? sx : [''], { id: score.id, title: score.meta.title, sheet: { kind: sheet.kind, fileName: sheet.fileName, hash: sheet.hash, pages: sheet.pages, omrMode: 'full' } });
-      if (full) {
+      if (full && full.measures.length >= score.measures.length) {
         if (full.sheet!.measures.length) full.sheet!.signals = await detectHardRegions(sx, keys.map((k) => r.binaries.get(k)), full.sheet!.measures).catch(() => []);
         exec(replaceRecognition(full));
       }
     } catch {
-      /* nhận dạng kỹ thất bại: dùng tiếp kết quả nhanh, vẫn kiểm tra + nhận dạng lại theo vùng */
+      /* nhận dạng kỹ thất bại: dùng tiếp kết quả nhanh */
     }
   }
 
-  // 2. Music Rule Validator + tự sửa an toàn
+  // 3. Music Rule Validator + tự sửa an toàn
   onProgress({ phase: 'validate', done: 0, total: 1, text: 'Kiểm tra quy tắc âm nhạc…' });
   let issues = validateMusic(score);
   const safe = issues.filter((i) => i.autoFix && i.code !== 'UNDERFULL');
   if (safe.length) exec(autoFixIssues(safe));
 
-  // 3. Region Re-recognition cho các ô có lỗi nặng (quy tắc âm nhạc + vùng khó phát hiện từ ảnh)
+  const sh = () => score.sheet!;
+  const systemsAll = [...new Set(sh().measures.map((g) => g.system))].sort((a, b) => a - b);
   issues = reviewIssues(score);
   const hard = [...difficulty(issues.filter((i) => !i.special))].filter(([, d]) => d >= 3).map(([mi]) => mi);
-  const systems = new Map<number, number[]>();
+  const hardBySystem = new Map<number, number[]>();
   for (const mi of hard) {
-    const g = score.sheet!.measures.find((x) => x.measureIndex === mi);
-    if (g) systems.set(g.system, [...(systems.get(g.system) ?? []), mi]);
+    const g = sh().measures.find((x) => x.measureIndex === mi);
+    if (g) hardBySystem.set(g.system, [...(hardBySystem.get(g.system) ?? []), mi]);
   }
+
+  // 4a. AI theo từng dòng: lời ca + rà soát
+  let aiTried = 0;
+  let aiImproved = 0;
+  let aiLyrics = 0;
+  let aiNote = '';
+  const diffs: OmrSignal[] = [];
+  let aiDead = false;
+  const lyricPart = score.parts.find((p) => Object.values(p.content).some((vs) => vs.some((v) => v.events.some((e) => e.kind === 'chord' && e.lyrics.length)))) ?? score.parts[0];
+  const lyricResults = new Map<number, string[][]>();
+  if (useAi && ai && asset && !isCancelled()) {
+    let done = 0;
+    onProgress({ phase: 'ai', done: 0, total: systemsAll.length, text: `AI đọc lời ca và rà soát ${systemsAll.length} dòng nhạc…` });
+    await pool(systemsAll, AI_CONCURRENCY, async (sys) => {
+      if (aiDead) return;
+      const geoms = sh().measures.filter((x) => x.system === sys).sort((a, b) => a.measureIndex - b.measureIndex);
+      const box = regionOf(geoms);
+      if (!box) return;
+      const order = geoms.map((g) => g.measureIndex);
+      const png = await cropPng(asset, box, REGION_CONFIGS[0]!);
+      const b64 = toBase64(png);
+      const fail = (e: Error) => {
+        const m = String(e.message ?? e);
+        aiNote = m;
+        if (/AI_UNAVAILABLE|AI_QUOTA|chưa cấu hình|hết .* lượt|INSUFFICIENT|401|402/i.test(m)) aiDead = true;
+        return null;
+      };
+      const ts = timeSigAt(score, order[0]!);
+      const [lyr, rev] = await Promise.all([
+        ai.lyrics && lyricPart
+          ? ai.lyrics({ image_png_base64: b64, notes: lyricTargetsIn(score, lyricPart.id, order).length }).catch(fail)
+          : Promise.resolve(null),
+        ai.region({
+          image_png_base64: b64, mode: 'review', measures: (hardBySystem.get(sys) ?? []).map((t) => order.indexOf(t) + 1),
+          musicxml: exportMusicXml(sliceScore(score, order)),
+          context: { key: keyAt(score, order[0]!), time: `${ts.beats}/${ts.beatType}`, parts: score.parts.map((p) => p.name) },
+        }).catch(fail),
+      ]);
+      aiTried++;
+      if (lyr?.verses.length) lyricResults.set(sys, lyr.verses);
+      if (rev) {
+        try {
+          const src = importMusicXml(rev.musicxml);
+          if (src.measures.length === order.length) {
+            const trial: ScoreDocument = JSON.parse(JSON.stringify(score));
+            const cmd = replaceMeasuresFrom(trial, src, order, order, `ai:${rev.model}`);
+            if (cmd) {
+              cmd.apply(trial);
+              const accept: number[] = [];
+              for (const mi of order) {
+                if (measurePrint(trial, mi) === measurePrint(score, mi)) continue;
+                const before = validateMusic(score, { measures: [mi] }).filter((i) => i.severity === 'error').length;
+                const after = validateMusic(trial, { measures: [mi] }).filter((i) => i.severity === 'error').length;
+                if (after < before) accept.push(mi);
+                else if (after === before) {
+                  diffs.push({ measureIndex: mi, code: 'AI_DIFF', message: `AI rà soát đọc ô ${score.measures[mi]!.number} khác kết quả nhận dạng — hãy so với ảnh gốc` });
+                }
+              }
+              if (accept.length) {
+                const c2 = replaceMeasuresFrom(score, src, order, accept, `ai:${rev.model}`);
+                if (c2) {
+                  exec(c2);
+                  aiImproved += accept.length;
+                }
+              }
+            }
+          }
+        } catch {
+          /* AI trả MusicXML không dùng được: giữ kết quả cũ */
+        }
+      }
+      onProgress({ phase: 'ai', done: ++done, total: systemsAll.length, text: `AI đã rà soát ${done}/${systemsAll.length} dòng…` });
+    }, isCancelled);
+    // lời ca: phân bổ theo từng dòng, theo thứ tự (mỗi dòng bắt đầu từ nốt đầu tiên của dòng)
+    if (lyricPart && lyricResults.size) {
+      for (const sys of systemsAll) {
+        const verses = lyricResults.get(sys);
+        if (!verses) continue;
+        const order = sh().measures.filter((x) => x.system === sys).map((g) => g.measureIndex).sort((a, b) => a - b);
+        if (!lyricTargetsIn(score, lyricPart.id, order).length) continue;
+        verses.forEach((syl, v) => {
+          try {
+            // chỉ trong dòng này: lời của dòng khác (kể cả lời Audiveris đọc được) giữ nguyên
+            exec(distributeLyrics({ partId: lyricPart.id, verse: v + 1, text: syl.join(' '), measures: order }));
+          } catch {
+            /* bỏ qua lời không gán được */
+          }
+        });
+        aiLyrics++;
+      }
+    }
+  }
+
+  // 4b. Không có AI (hoặc AI lỗi): nhận dạng lại theo vùng bằng Audiveris với cấu hình khác
   let tried = 0;
   let improved = 0;
-  const work = [...systems].slice(0, MAX_REGIONS);
-  if (asset && tauriInvoke()) {
+  const work = [...hardBySystem].filter(([, t]) => validateMusic(score, { measures: t }).some((i) => i.severity === 'error')).slice(0, MAX_REGIONS);
+  if ((!useAi || aiDead) && asset && tauriInvoke()) {
     for (const [sys, targets] of work) {
       if (isCancelled()) break;
       tried++;
@@ -569,57 +706,19 @@ export async function convertToEdit(
     }
   }
 
-  // 3b. AI đọc lại các dòng VẪN còn lỗi sau Audiveris (ảnh dòng nhạc + MusicXML → MusicXML đã sửa, chỉ nhận khi ít lỗi hơn)
-  let aiTried = 0;
-  let aiImproved = 0;
-  let aiNote = '';
-  const sh = score.sheet!;
-  if (ai && asset && !isCancelled()) {
-    const still = [...systems].filter(([, t]) => validateMusic(score, { measures: t }).some((i) => i.severity === 'error')).slice(0, MAX_REGIONS);
-    for (const [sys, targets] of still) {
-      if (isCancelled()) break;
-      const sysGeoms = sh.measures.filter((x) => x.system === sys).sort((a, b) => a.measureIndex - b.measureIndex);
-      const box = regionOf(sysGeoms);
-      if (!box) continue;
-      aiTried++;
-      onProgress({ phase: 'ai', done: aiTried - 1, total: still.length, text: `AI đọc lại dòng ${sys + 1}…` });
-      const order = sysGeoms.map((g) => g.measureIndex);
-      const png = await cropPng(asset, box, REGION_CONFIGS[0]!);
-      const ts = timeSigAt(score, order[0]!);
-      const res = await ai({
-        image_png_base64: toBase64(png),
-        musicxml: exportMusicXml(sliceScore(score, order)),
-        measures: targets.map((t) => order.indexOf(t) + 1),
-        context: { key: keyAt(score, order[0]!), time: `${ts.beats}/${ts.beatType}`, parts: score.parts.map((p) => p.name) },
-      }).catch((e: Error) => {
-        aiNote = String(e.message ?? e);
-        return null;
-      });
-      if (!res) break; // AI chưa bật hoặc lỗi: dừng bước AI
-      try {
-        const src = importMusicXml(res.musicxml);
-        const before = validateMusic(score, { measures: targets }).filter((i) => i.severity === 'error').length;
-        const trial: ScoreDocument = JSON.parse(JSON.stringify(score));
-        const cmd = replaceMeasuresFrom(trial, src, order, targets, `ai:${res.model}`);
-        if (!cmd) continue;
-        cmd.apply(trial);
-        const after = validateMusic(trial, { measures: targets }).filter((i) => i.severity === 'error').length;
-        if (after < before) {
-          exec(replaceMeasuresFrom(score, src, order, targets, `ai:${res.model}`)!);
-          aiImproved++;
-        }
-      } catch {
-        /* AI trả MusicXML không dùng được: giữ kết quả cũ */
-      }
-    }
+  // 5. dựng khuông nhạc đầy đủ + đánh dấu các ô cần đối chiếu (gồm ô AI đọc khác)
+  if (diffs.length) {
+    const signals = [...(score.sheet!.signals ?? []).filter((x) => x.code !== 'AI_DIFF'), ...diffs];
+    exec({ label: 'Ghi các ô AI đọc khác', scope: () => ({ kind: 'all' }), apply: (s) => { if (s.sheet) s.sheet.signals = signals; } });
   }
-
-  // 4. dựng khuông nhạc đầy đủ + đánh dấu các ô cần đối chiếu
   issues = reviewIssues(score);
   exec(enterEditMode(conv, issues));
-  onProgress({ phase: 'done', done: work.length, total: work.length, text: 'Xong' });
-  return { issues, fixed: safe.length, regionsTried: tried, regionsImproved: improved, aiTried, aiImproved, aiNote };
+  onProgress({ phase: 'done', done: 1, total: 1, text: 'Xong' });
+  return { issues, fixed: safe.length, regionsTried: tried, regionsImproved: improved, aiTried, aiImproved, aiLyrics, aiDiffs: diffs.length, aiNote };
 }
+
+/** Audiveris: OCR lời ca bằng tiếng Việt + tiếng Anh (dữ liệu Tesseract đóng gói kèm) */
+const VIE_OCR = 'const:org.audiveris.omr.text.Language.defaultSpecification=vie+eng';
 
 /**
  * Region Re-recognition: cắt riêng dòng nhạc `sys`, chạy lại Audiveris với từng cấu hình khác,

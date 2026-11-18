@@ -61,7 +61,7 @@ T::test('[DB] tài khoản mới nhận 100 credit đúng một lần, khóa the
     throwsCode(fn () => $auth->authenticate($a['token']), 'UNAUTHENTICATED');
 });
 
-T::test('[DB] chuyển sang Edit trừ 10 credit đúng một lần cho mỗi file gốc', function () {
+T::test('[DB] chuyển sang Edit trừ 50 credit đúng một lần cho mỗi file gốc; admin miễn phí', function () {
     $db = testDb();
     $w = new WalletService($db);
     $svc = new \HolyMelody\Omr\OmrConversionService($db, $w);
@@ -71,13 +71,19 @@ T::test('[DB] chuyển sang Edit trừ 10 credit đúng một lần cho mỗi fi
     $b = $svc->convert($uid, strtoupper($h), 'Bài A', 2, 32);
     ok(!$a['replayed'] && $b['replayed']);
     eq($a['conversion_id'], $b['conversion_id']);
-    eq($w->balance($uid), 90);
+    eq($w->balance($uid), 50);
     $svc->convert($uid, str_repeat('cd', 32), 'Bài B', 1, 8);
-    eq($w->balance($uid), 80, 'file khác bị trừ riêng');
+    eq($w->balance($uid), 0, 'file khác bị trừ riêng');
     throwsCode(fn () => $svc->convert($uid, 'xyz', 'x', 1, 1), 'INVALID_SOURCE_HASH');
-    $w->apply($uid, -80, 'ai_charge', 'ai_job', 777, 'drain');
     throwsCode(fn () => $svc->convert($uid, str_repeat('ef', 32), 'Bài C', 1, 1), 'INSUFFICIENT_CREDITS');
     eq((int) $db->one('SELECT COUNT(*) c FROM omr_conversions WHERE user_id = ?', [$uid])['c'], 2, 'không còn bản ghi khi thiếu credit');
+    // admin: không giới hạn credit
+    $admin = newUser($db, 'sub-OMR-admin');
+    $db->exec("INSERT INTO admin_users (user_id, role) VALUES (?, 'owner')", [$admin]);
+    $before = $w->balance($admin);
+    $c = $svc->convert($admin, str_repeat('12', 32), 'Bài D', 1, 4);
+    eq($c['credits'], 0);
+    eq($w->balance($admin), $before, 'admin không bị trừ credit');
 });
 
 T::test('[DB] không thể âm credit; idempotency key không trừ hai lần', function () {

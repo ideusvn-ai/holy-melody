@@ -65,6 +65,14 @@ export interface DistributeOptions {
   voiceNumber?: number;
   /** Nốt nằm giữa dấu luyến nhận cùng âm tiết (melisma) — mặc định true */
   respectSlurs?: boolean;
+  /** Chỉ phân bổ (và chỉ xoá lời cũ) trong các ô này — vd một dòng nhạc; âm tiết thừa bị bỏ */
+  measures?: number[];
+}
+
+function rangeFilter(score: ScoreDocument, o: DistributeOptions): ((id: string) => boolean) {
+  if (!o.measures) return () => true;
+  const ids = new Set(lyricTargetsIn(score, o.partId, o.measures, o.voiceNumber ?? 1).map((e) => e.id));
+  return (id) => ids.has(id);
 }
 
 export interface DistributeReport {
@@ -76,6 +84,19 @@ export interface DistributeReport {
   notesWithoutLyrics: number;
 }
 
+/** Các nốt nhận lời (bỏ dấu lặng, nốt nối, nốt hoa mỹ) của bè `partId` trong các ô `measureIndices` */
+export function lyricTargetsIn(score: ScoreDocument, partId: string, measureIndices: number[], voiceNumber = 1): ChordEvent[] {
+  const ids = new Set(measureIndices.map((i) => score.measures[i]?.id));
+  const inRange = new Set<string>();
+  const part = score.parts.find((p) => p.id === partId);
+  for (const id of ids) {
+    if (!id || !part) continue;
+    const v = (part.content[id] ?? []).find((x) => x.number === voiceNumber) ?? (part.content[id] ?? [])[0];
+    for (const e of v?.events ?? []) inRange.add(e.id);
+  }
+  return lyricTargets(score, partId, voiceNumber).filter((t) => inRange.has(t.event.id)).map((t) => t.event);
+}
+
 /** Xem trước kết quả mà không thay đổi bản nhạc */
 export function planLyrics(score: ScoreDocument, o: DistributeOptions) {
   const tokens = tokenizeLyrics(o.text);
@@ -85,6 +106,8 @@ export function planLyrics(score: ScoreDocument, o: DistributeOptions) {
     if (i < 0) throw new Error('Nốt bắt đầu không nhận lời (dấu lặng, nốt nối hoặc nốt hoa mỹ)');
     targets = targets.slice(i);
   }
+  const inRange = rangeFilter(score, o);
+  targets = targets.filter((t) => inRange(t.event.id));
   const respect = o.respectSlurs ?? true;
   const plan: { eventId: string; lyric: Omit<Lyric, 'id'> | null }[] = [];
   let ti = 0;
@@ -124,7 +147,8 @@ export const distributeLyrics = (o: DistributeOptions): Command => ({
     const targets = lyricTargets(s, o.partId, o.voiceNumber ?? 1);
     const startIdx = o.startEventId ? targets.findIndex((t) => t.event.id === o.startEventId) : 0;
     // xóa lời cùng phiên khúc từ điểm bắt đầu tới hết (để không còn chữ cũ lẫn vào)
-    for (const t of targets.slice(Math.max(0, startIdx))) t.event.lyrics = t.event.lyrics.filter((l) => l.verse !== o.verse);
+    const inRange = rangeFilter(s, o);
+    for (const t of targets.slice(Math.max(0, startIdx))) if (inRange(t.event.id)) t.event.lyrics = t.event.lyrics.filter((l) => l.verse !== o.verse);
     // nốt nối/nốt giữa luyến cũng xóa lời cũ của phiên khúc này
     const idx = new ScoreIndex(s);
     for (const p of plan) {
@@ -186,3 +210,48 @@ export const nudgeLyric = (eventId: string, verse: number, dx: number): Command 
     l.offsetX = dx === 0 ? undefined : Math.round(((l.offsetX ?? 0) + dx) * 10) / 10;
   },
 });
+
+/**
+ * Dời lời từ một nốt trở về sau đi MỘT nốt (cả đoạn phía sau dời theo).
+ *  - direction +1 (đẩy tới): nốt đang chọn thành trống, mỗi âm tiết sang nốt kế tiếp. Cần nốt cuối còn trống.
+ *  - direction −1 (lùi lại): mỗi âm tiết sang nốt trước; nốt ngay trước điểm chọn phải đang trống.
+ * Chỉ tính nốt nhận lời (bỏ dấu lặng, nốt nối, nốt hoa mỹ). Một bước Undo.
+ */
+export function shiftLyrics(o: { partId: string; verse: number; fromEventId: string; direction: 1 | -1; voiceNumber?: number }): Command {
+  return {
+    label: o.direction > 0 ? 'Đẩy lời sang nốt sau' : 'Lùi lời về nốt trước',
+    scope: () => ({ kind: 'all' }),
+    apply: (s) => {
+      const targets = lyricTargets(s, o.partId, o.voiceNumber ?? 1);
+      const i = targets.findIndex((t) => t.event.id === o.fromEventId);
+      if (i < 0) throw new Error('Nốt đang chọn không nhận lời (dấu lặng, nốt nối hoặc nốt hoa mỹ)');
+      const take = (k: number) => {
+        const ev = targets[k]!.event;
+        const l = ev.lyrics.find((x) => x.verse === o.verse) ?? null;
+        ev.lyrics = ev.lyrics.filter((x) => x.verse !== o.verse);
+        return l;
+      };
+      const put = (k: number, l: Lyric | null) => {
+        if (!l) return;
+        const ev = targets[k]!.event;
+        const { offsetX: _drop, ...rest } = l;
+        void _drop;
+        ev.lyrics.push(rest);
+        ev.lyrics.sort((a, b) => a.verse - b.verse);
+      };
+      const has = (k: number) => targets[k]!.event.lyrics.some((x) => x.verse === o.verse);
+      // phạm vi: từ i tới âm tiết cuối cùng của lời này
+      let last = targets.length - 1;
+      while (last >= i && !has(last)) last--;
+      if (last < i) throw new Error('Không có lời nào từ nốt này trở về sau');
+      if (o.direction > 0) {
+        if (last + 1 >= targets.length) throw new Error('Hết nốt để đẩy lời tới — âm tiết cuối đã ở nốt cuối cùng');
+        for (let k = last; k >= i; k--) put(k + 1, take(k));
+      } else {
+        if (i === 0) throw new Error('Đã ở nốt đầu tiên');
+        if (has(i - 1)) throw new Error('Nốt trước đã có lời — xoá âm tiết đó trước khi lùi');
+        for (let k = i; k <= last; k++) put(k - 1, take(k));
+      }
+    },
+  };
+}

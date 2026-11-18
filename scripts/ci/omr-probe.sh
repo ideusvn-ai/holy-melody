@@ -27,7 +27,7 @@ done
 # ---- lời ca tiếng Việt: Audiveris có sẵn dữ liệu OCR nào? thử thêm vie.traineddata
 echo "== tessdata đi kèm Audiveris:"; find "$AUD_DIR" -name '*.traineddata' | head; find / -name 'eng.traineddata' 2>/dev/null | head -3
 mkdir -p /tmp/tess "$HOME/.config/AudiverisLtd/audiveris/tessdata"
-for l in vie eng; do curl -sSL -o /tmp/tess/$l.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/$l.traineddata; done
+for l in vie eng; do curl -sSL -o /tmp/tess/$l.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/$l.traineddata; done
 ls -la /tmp/tess; cp /tmp/tess/*.traineddata "$HOME/.config/AudiverisLtd/audiveris/tessdata/"
 for variant in default vie; do
   opts=""; [ $variant = vie ] && opts="-constant org.audiveris.omr.text.Language.defaultSpecification=vie+eng"

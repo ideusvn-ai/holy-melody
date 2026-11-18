@@ -116,4 +116,18 @@ writeFileSync(join(dest, 'AUDIVERIS-NOTICE.txt'),
   `Audiveris được phân phối nguyên vẹn, chạy như một chương trình riêng. Mã nguồn tương ứng: https://github.com/${REPO}/tree/${rel.tag_name}\n` +
   'Toàn văn giấy phép: https://www.gnu.org/licenses/agpl-3.0.txt\n');
 console.log('Đã giải nén vào', dest, '→', exeRel);
+
+// ---- dữ liệu OCR Tesseract cho lời ca: tiếng Việt + tiếng Anh (bộ "tessdata" đầy đủ — Audiveris dùng engine legacy,
+// bộ tessdata_fast thiếu thành phần này). Apache-2.0.
+const tessDir = join(dirname(dest), 'tessdata');
+mkdirSync(tessDir, { recursive: true });
+for (const lang of ['vie', 'eng']) {
+  const f = join(tessDir, `${lang}.traineddata`);
+  if (existsSync(f) && statSync(f).size > 1_000_000) continue;
+  const res = await fetch(`https://github.com/tesseract-ocr/tessdata/raw/main/${lang}.traineddata`);
+  if (!res.ok) throw new Error(`Không tải được ${lang}.traineddata: HTTP ${res.status}`);
+  writeFileSync(f, new Uint8Array(await res.arrayBuffer()));
+  console.log('OCR', lang, statSync(f).size, 'bytes');
+}
+writeFileSync(join(tessDir, 'NOTICE.txt'), 'Tesseract trained data (https://github.com/tesseract-ocr/tessdata), Apache License 2.0.\n');
 rmSync(work, { recursive: true, force: true });

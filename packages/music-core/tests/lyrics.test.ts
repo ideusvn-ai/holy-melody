@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   CommandHistory, distributeLyrics, exportMusicXml, importMusicXml, lyricsToText, nudgeLyric, planLyrics, ScoreIndex, setLyricStyle,
-  toggleSlur, toggleTie, tokenizeLyrics, versesOf, type ChordEvent,
+  shiftLyrics, toggleSlur, toggleTie, tokenizeLyrics, versesOf, type ChordEvent,
 } from '../src/index.js';
 import { buildScore } from './helpers.js';
 
@@ -64,4 +64,33 @@ test('kiểu chữ, cỡ chữ, vị trí lời ca và dịch từng âm tiết 
   assert.throws(() => h.execute(setLyricStyle({ lyricFontSizePt: 40 })));
   h.undo(); h.undo(); h.undo();
   assert.equal(s.layout.lyricFont, 'Noto Serif');
+});
+
+test('đẩy/lùi lời: từ đang chọn và mọi từ phía sau dời theo một nốt', () => {
+  const s = buildScore([{ name: 'S', measures: ['C4:q D4:q E4:q F4:q', 'G4:q A4:q B4:q C5:q'] }]);
+  const p = s.parts[0]!.id;
+  const h = new CommandHistory(s);
+  h.execute(distributeLyrics({ partId: p, verse: 1, text: 'Lạy Chúa con xin' }));
+  const ids = new ScoreIndex(s).allNoteIds();
+  const evId = (i: number) => new ScoreIndex(s).note(ids[i]!)!.event.id;
+  const texts = () => ids.map((id) => (new ScoreIndex(s).note(id)!.event as ChordEvent).lyrics[0]?.text ?? '·').join(' ');
+  h.execute(shiftLyrics({ partId: p, verse: 1, fromEventId: evId(1), direction: 1 }));
+  assert.equal(texts(), 'Lạy · Chúa con xin · · ·');
+  h.execute(shiftLyrics({ partId: p, verse: 1, fromEventId: evId(2), direction: 1 }));
+  assert.equal(texts(), 'Lạy · · Chúa con xin · ·');
+  h.execute(shiftLyrics({ partId: p, verse: 1, fromEventId: evId(3), direction: -1 }));
+  assert.equal(texts(), 'Lạy · Chúa con xin · · ·');
+  assert.throws(() => h.execute(shiftLyrics({ partId: p, verse: 1, fromEventId: evId(3), direction: -1 })), /Nốt trước đã có lời/);
+  h.undo();
+  h.undo();
+  assert.equal(texts(), 'Lạy · Chúa con xin · · ·');
+});
+
+test('phân bổ lời trong phạm vi một dòng: không đụng lời ở dòng khác, bỏ âm tiết thừa', () => {
+  const s = buildScore([{ name: 'S', measures: ['C4:q D4:q E4:q F4:q', 'G4:q A4:q B4:q C5:q'] }]);
+  const p = s.parts[0]!.id;
+  const h = new CommandHistory(s);
+  h.execute(distributeLyrics({ partId: p, verse: 1, text: 'a b c d e f g h' }));
+  h.execute(distributeLyrics({ partId: p, verse: 1, text: 'Lạy Chúa xin thương thừa', measures: [0] }));
+  assert.equal(lyricsToText(s, p, 1), 'Lạy Chúa xin thương e f g h');
 });

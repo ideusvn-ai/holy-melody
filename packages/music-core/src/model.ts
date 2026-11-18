@@ -336,7 +336,8 @@ export interface SheetMeasureGeom extends SheetBox {
 
 export interface OmrSignal {
   measureIndex: number;
-  code: 'KEY_SUSPECT' | 'LOW_GRADE';
+  /** KEY_SUSPECT: nghi sót hoá biểu · LOW_GRADE: Audiveris không chắc · AI_DIFF: AI rà soát đọc ô này khác Audiveris */
+  code: 'KEY_SUSPECT' | 'LOW_GRADE' | 'AI_DIFF';
   message: string;
 }
 

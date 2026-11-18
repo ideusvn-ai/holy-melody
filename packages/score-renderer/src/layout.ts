@@ -29,6 +29,8 @@ export interface NoteHeadBox {
   staffPos: number;
   filled: boolean;
   accidental?: string;
+  /** x mép phải của dấu hoá (xếp cột khi hợp âm có nhiều dấu hoá) */
+  accX?: number;
   ledger: number[];
 }
 
@@ -52,6 +54,8 @@ export interface EventBox {
   /** số vạch chùm (0 = không chùm → vẽ cờ) */
   beams: number;
   beamed: boolean;
+  /** khuông này có nhiều bè (voice) — dấu lặng đặt lệch lên/xuống */
+  multiVoice?: boolean;
 }
 
 export interface Curve {
@@ -309,7 +313,7 @@ function layoutOnce(score: ScoreDocument, opts: LayoutOptions): ScoreLayout {
             const box: EventBox = {
               event: ev, partId: part.id, measureId: m.id, staffY: staff.y, x, heads: [], stemUp: true, lyrics: [],
               voice: v.number, measureIndex: mb.index, start: timings[i]!.start, systemIndex: sys.index,
-              stemX: x, stemEnd: 0, beams: 0, beamed: false,
+              stemX: x, stemEnd: 0, beams: 0, beamed: false, multiVoice,
             };
             if (ev.kind === 'chord') {
               const positions = ev.notes.map((n) => staffPosition(n.pitch, staff.clef));
@@ -348,6 +352,7 @@ function layoutOnce(score: ScoreDocument, opts: LayoutOptions): ScoreLayout {
       }
     }
   }
+  resolveCollisions(events, sp);
   const lastSys = systems[systems.length - 1];
   const deco = decorate(score, events, systems, measureBoxes, sp);
   // cường độ: trên khuông nếu bè có lời ca (tránh chồng lời), ngược lại dưới khuông
@@ -368,6 +373,81 @@ function layoutOnce(score: ScoreDocument, opts: LayoutOptions): ScoreLayout {
     height: lastSys ? lastSys.y + lastSys.height + staffGap + marginTop : 200,
     systems, events, heads, measures: measureBoxes, chordSymbols,
   };
+}
+
+/** Đầu nốt Bravura (noteheadBlack) rộng 1.18 khoảng; thân nốt nằm trong mép đầu nốt */
+export const HEAD_W = 1.18;
+const STEM_DX = 0.55;
+
+/**
+ * Tránh chồng ký hiệu:
+ *  - hợp âm có quãng 2: đầu nốt kề nhau đặt sang phía bên kia thân nốt;
+ *  - nhiều dấu hoá trong hợp âm: xếp thành cột từ trên xuống, không đè nhau;
+ *  - hai bè trên cùng khuông, cùng thời điểm, cao độ sát nhau (≤ quãng 2): bè dưới lệch sang phải
+ *    (đồng âm cùng loại đầu nốt thì dùng chung một đầu nốt).
+ */
+function resolveCollisions(events: EventBox[], sp: number) {
+  for (const e of events) {
+    if (e.event.kind !== 'chord' || !e.heads.length) continue;
+    const scale = e.event.grace ? 0.65 : 1;
+    const w = HEAD_W * sp * scale;
+    const sorted = [...e.heads].sort((a, b) => (e.stemUp ? a.staffPos - b.staffPos : b.staffPos - a.staffPos));
+    let prev: NoteHeadBox | undefined;
+    let prevShifted = false;
+    for (const h of sorted) {
+      const second = prev && Math.abs(h.staffPos - prev.staffPos) === 1;
+      const shift = !!second && !prevShifted;
+      h.x = e.x + (shift ? (e.stemUp ? w : -w) : 0);
+      prevShifted = shift;
+      prev = h;
+    }
+  }
+  // hai bè cùng khuông
+  const groups = new Map<string, EventBox[]>();
+  for (const e of events) {
+    if (e.event.kind !== 'chord' || !e.multiVoice || e.event.grace) continue;
+    const k = `${e.systemIndex}:${e.staffY}:${e.measureId}:${e.start}`;
+    groups.set(k, [...(groups.get(k) ?? []), e]);
+  }
+  for (const g of groups.values()) {
+    if (g.length < 2) continue;
+    g.sort((a, b) => a.voice - b.voice);
+    for (let i = 1; i < g.length; i++) {
+      const upper = g[i - 1]!;
+      const lower = g[i]!;
+      let close = false;
+      let shareable = true;
+      for (const a of upper.heads) {
+        for (const b of lower.heads) {
+          const d = Math.abs(a.staffPos - b.staffPos);
+          if (d <= 1) close = true;
+          if (d === 1 || (d === 0 && (a.filled !== b.filled || upper.event.kind !== 'chord' || lower.event.kind !== 'chord' ||
+            upper.event.duration.dots !== lower.event.duration.dots))) shareable = false;
+        }
+      }
+      if (!close || shareable) continue;
+      const dx = HEAD_W * sp + sp * 0.15;
+      lower.x += dx;
+      for (const h of lower.heads) h.x += dx;
+    }
+  }
+  // dấu hoá: xếp cột
+  for (const e of events) {
+    if (e.event.kind !== 'chord') continue;
+    const scale = e.event.grace ? 0.65 : 1;
+    const withAcc = e.heads.filter((h) => h.accidental).sort((a, b) => b.staffPos - a.staffPos);
+    const left = Math.min(...e.heads.map((h) => h.x)) - (HEAD_W / 2) * sp * scale - sp * 0.25;
+    const cols: number[][] = [];
+    for (const h of withAcc) {
+      let c = cols.findIndex((col) => col.every((p) => Math.abs(p - h.staffPos) >= 6));
+      if (c < 0) {
+        cols.push([]);
+        c = cols.length - 1;
+      }
+      cols[c]!.push(h.staffPos);
+      h.accX = left - c * sp * 1.15 * scale;
+    }
+  }
 }
 
 /** Hiển thị dấu hóa khi khác hóa biểu hoặc khác dấu hóa trước đó trong ô (cùng khuông, cùng cao độ viết) */
@@ -415,7 +495,7 @@ function decorate(score: ScoreDocument, events: EventBox[], systems: SystemBox[]
     if (e.event.kind !== 'chord' || !e.heads.length) continue;
     const ys = e.heads.map((h) => h.y);
     const scale = e.event.grace ? 0.7 : 1;
-    e.stemX = e.stemUp ? e.x + sp * 0.62 * scale : e.x - sp * 0.62 * scale;
+    e.stemX = e.stemUp ? e.x + STEM_DX * sp * scale : e.x - STEM_DX * sp * scale;
     e.stemEnd = e.stemUp ? Math.min(...ys) - sp * 3.4 * scale : Math.max(...ys) + sp * 3.4 * scale;
     e.beams = e.event.grace ? 1 : FLAGS[e.event.duration.type] ?? 0;
   }
@@ -514,7 +594,7 @@ function makeBeam(group: EventBox[], sp: number): BeamGroup {
   const ext = (e: EventBox) => (up ? Math.min(...e.heads.map((h) => h.y)) : Math.max(...e.heads.map((h) => h.y)));
   for (const e of group) {
     e.stemUp = up;
-    e.stemX = up ? e.x + sp * 0.62 : e.x - sp * 0.62;
+    e.stemX = up ? e.x + STEM_DX * sp : e.x - STEM_DX * sp;
     e.beamed = true;
   }
   const x1 = first.stemX;

@@ -243,7 +243,7 @@ function page_pricing(array $ctx, bool $embedded = false): void
       </article>
     <?php endforeach; ?>
   </div>
-  <p class="small">Thanh toán bằng chuyển khoản ngân hàng qua mã VietQR (xác nhận tự động bởi SePay): quét mã bằng app ngân hàng bất kỳ, credit được cộng ngay khi tiền vào tài khoản. Mỗi tác vụ AI mặc định 10 credit; job lỗi do hệ thống được hoàn credit tự động.</p>
+  <p class="small">Thanh toán bằng chuyển khoản ngân hàng qua mã VietQR (xác nhận tự động bởi SePay): quét mã bằng app ngân hàng bất kỳ, credit được cộng ngay khi tiền vào tài khoản. Chuyển một bản nhạc ảnh/PDF sang Editor: 50 credit (một lần cho mỗi file). Mỗi tác vụ AI khác mặc định 10 credit; job lỗi do hệ thống được hoàn credit tự động.</p>
   <?php endif; ?>
 </section>
 <?php
@@ -258,7 +258,7 @@ function page_faq(array $ctx, bool $embedded = false): void
         'Có đọc PDF scan không?' => 'Có, qua Audiveris (miễn phí, cài riêng). Kết quả nhận dạng không thể đúng 100%, nên các nốt được đánh dấu "chưa xác minh" để bạn đối chiếu và sửa trước khi dùng.',
         'Có thể xuất MIDI không?' => 'Có: MIDI giữ đúng cao độ, trường độ, tempo, số chỉ nhịp, hóa biểu, nhiều track, nhạc cụ và cường độ. Ngoài ra còn MusicXML, MXL, PDF, PNG, SVG và WAV.',
         'AI có giữ đúng giai điệu không?' => 'Chế độ Strict Melody chỉ dùng công nghệ tổng hợp giọng hát theo từng nốt và lời, không phải dịch vụ "tạo nhạc từ mô tả". Tính năng chỉ được bật khi nhà cung cấp đáp ứng yêu cầu này; trước đó bạn không thể tạo và không bị trừ credit.',
-        'Credit được tính thế nào?' => 'Mỗi tác vụ AI hợp lệ mặc định 10 credit, hiển thị trước khi xác nhận. Hệ thống tự thử lại không tính thêm phí; job lỗi do hệ thống được hoàn credit. 100 credit = 100.000 VNĐ.',
+        'Credit được tính thế nào?' => 'Chuyển một bản nhạc sang Editor: 50 credit (một lần cho mỗi file). Mỗi tác vụ AI khác mặc định 10 credit, hiển thị trước khi xác nhận. Hệ thống tự thử lại không tính thêm phí; job lỗi do hệ thống được hoàn credit. 100 credit = 100.000 VNĐ.',
     ];
     ?>
 <section class="<?= $embedded ? 'faq reveal' : 'page faq' ?>" id="faq">

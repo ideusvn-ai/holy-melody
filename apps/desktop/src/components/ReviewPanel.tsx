@@ -149,7 +149,7 @@ export function EditGate({ onConvert }: { onConvert: () => void }) {
       <div className="max-w-md text-center space-y-3">
         <h2 className="text-[16px] font-semibold">Bản nhạc đang ở chế độ xem bản gốc</h2>
         <p className="text-muted text-[13px]">Player đang phát trực tiếp trên ảnh/PDF gốc. Để biên tập, Holy Melody cần dựng khuông nhạc đầy đủ. Bước này có kiểm tra quy tắc, nhận dạng lại vùng khó và đối chiếu với ảnh gốc.</p>
-        <button className="h-10 px-5 rounded-md bg-accent text-accent-fg font-semibold" onClick={onConvert}>Chuyển sang Edit · 10 credit</button>
+        <button className="h-10 px-5 rounded-md bg-accent text-accent-fg font-semibold" onClick={onConvert}>Chuyển sang Editor</button>
         <p className="text-[11px] text-muted">Mỗi file gốc chỉ bị trừ credit một lần.</p>
       </div>
     </div>

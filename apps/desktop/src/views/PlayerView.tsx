@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMidiInput } from '../lib/midiInput';
-import { HighlightIndex, pitchToMidi, ScoreIndex } from '@holy-melody/music-core';
+import {
+  accompany, buildTimeline, chordsForAccompaniment, DEFAULT_PLAYER_SETTINGS, HighlightIndex, pitchToMidi, ScoreIndex, timelineToMidiFile, writeMidiFile,
+  type PlayerSettings, type ScoreDocument,
+} from '@holy-melody/music-core';
+import { saveBytes } from '../lib/fileio';
 import { ScoreView } from '../components/ScoreView';
 import { SheetView } from '../components/SheetView';
 import { CountIn } from '../components/CountIn';
@@ -9,80 +13,73 @@ import { useActiveProject, useStore } from '../state/store';
 import { playbackPosition, usePlayback } from '../state/playback';
 import { useAccount } from '../state/account';
 
-/** Nhạc cụ phát (GM program 0-based); null = theo bản nhạc */
-const INSTRUMENTS: [number | null, string][] = [
-  [null, 'Theo bản nhạc'], [0, 'Piano'], [19, 'Organ nhà thờ'], [16, 'Organ điện'], [52, 'Hợp xướng (Aah)'], [53, 'Giọng hát (Ooh)'],
-  [48, 'Dàn dây'], [40, 'Violin'], [42, 'Cello'], [73, 'Sáo'], [71, 'Clarinet'], [24, 'Guitar'], [46, 'Đàn hạc'],
-];
-
-/** Panel trái của Player: chỉ những gì cần khi nghe — nhạc cụ, âm lượng, đệm hợp âm, dịch giọng, tempo */
+/** Panel trái của Player: chỉ Tempo, "Chuyển sang Editor" và "Xuất nhạc" (MIDI / MIDI + đệm đàn) */
 export function PlayerLeft() {
   const project = useActiveProject();
   const player = useStore((s) => s.player);
-  const setPlayer = useStore((s) => s.setPlayer);
+  const notify = useStore((s) => s.notify);
   const pb = usePlayback();
   const [convert, setConvert] = useState(false);
+  const [busy, setBusy] = useState(false);
   const goEditor = useGoToEditor(() => setConvert(true));
   if (!project) return null;
   const s = project.score;
   const baseBpm = s.tempoMap[0]?.bpm ?? 90;
   const bpm = Math.round(baseBpm * pb.speed);
-  const overlay = s.sheet?.mode === 'overlay';
-  const pct = (v: number) => `${Math.round(v * 100)}%`;
   const label = 'block text-[11px] uppercase tracking-wide text-muted mb-1.5';
-  const range = 'w-full accent-[var(--accent)]';
+  const pending = !!s.sheet?.pending;
+
+  const exportMusic = async (withAccompaniment: boolean) => {
+    setBusy(true);
+    try {
+      const bytes = playerMidi(s, withAccompaniment, player, pb.speed);
+      const name = `${(s.meta.title || 'ban-nhac').replace(/[\\/:*?"<>|]+/g, '-')}${withAccompaniment ? ' (dem dan)' : ''}.mid`;
+      const path = await saveBytes(name, bytes, 'audio/midi', [{ name: 'MIDI', extensions: ['mid'] }]);
+      if (path !== undefined) notify(withAccompaniment ? 'Đã xuất MIDI kèm đệm đàn (track "Đệm" riêng).' : 'Đã xuất MIDI.');
+    } catch (e) {
+      notify(String((e as Error).message ?? e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="p-3 space-y-5 text-[12.5px]">
       <button className="w-full h-10 rounded-lg bg-accent text-accent-fg font-semibold shadow-sm hover:brightness-110 active:scale-[0.99] transition disabled:opacity-40"
-        disabled={!!s.sheet?.pending} onClick={goEditor}>
-        Chuyển sang Editor{overlay ? ' · 10 credit' : ''}
+        disabled={pending} onClick={goEditor}>
+        Chuyển sang Editor
       </button>
       {convert && <ConvertDialog onClose={() => setConvert(false)} />}
 
       <section>
-        <label className={label} htmlFor="pl-instr">Nhạc cụ</label>
-        <select id="pl-instr" className="w-full h-9 rounded-md border border-line bg-surface px-2" value={player.program ?? ''}
-          onChange={(e) => setPlayer({ program: e.target.value === '' ? null : Number(e.target.value) })}>
-          {INSTRUMENTS.map(([prog, name]) => <option key={String(prog)} value={prog ?? ''}>{name}</option>)}
-        </select>
-      </section>
-
-      <section>
-        <span className={label}>Âm lượng MIDI <span className="float-right normal-case tabular-nums">{pct(player.melodyVolume)}</span></span>
-        <input type="range" min={0} max={1} step={0.01} value={player.melodyVolume} className={range} aria-label="Âm lượng MIDI"
-          onChange={(e) => setPlayer({ melodyVolume: Number(e.target.value) })} />
-      </section>
-
-      <section>
-        <span className={label}>Âm lượng hợp âm <span className="float-right normal-case tabular-nums">{player.chordVolume ? pct(player.chordVolume) : 'Tắt'}</span></span>
-        <input type="range" min={0} max={1} step={0.01} value={player.chordVolume} className={range} aria-label="Âm lượng hợp âm"
-          onChange={(e) => setPlayer({ chordVolume: Number(e.target.value) })} />
-        <div className="flex gap-4 mt-1.5 text-[11.5px] text-muted">
-          <label className="flex items-center gap-1.5"><input type="checkbox" checked={player.intro} onChange={(e) => setPlayer({ intro: e.target.checked })} /> Dạo đầu</label>
-          <label className="flex items-center gap-1.5"><input type="checkbox" checked={player.countIn} onChange={(e) => setPlayer({ countIn: e.target.checked })} /> Đếm vào</label>
-        </div>
-      </section>
-
-      <section>
-        <span className={label}>Transpose phát</span>
-        <div className="flex items-center gap-2">
-          <button className="h-9 w-9 rounded-md border border-line hover:bg-surface-2 text-[16px]" onClick={() => setPlayer({ transpose: Math.max(-12, player.transpose - 1) })} aria-label="Hạ nửa cung">−</button>
-          <span className="flex-1 text-center tabular-nums font-medium">{player.transpose > 0 ? `+${player.transpose}` : player.transpose} <span className="text-muted font-normal">nửa cung</span></span>
-          <button className="h-9 w-9 rounded-md border border-line hover:bg-surface-2 text-[16px]" onClick={() => setPlayer({ transpose: Math.min(12, player.transpose + 1) })} aria-label="Nâng nửa cung">+</button>
-        </div>
-      </section>
-
-      <section>
         <span className={label}>Tempo <span className="float-right normal-case tabular-nums">♩ = {bpm}{pb.speed !== 1 && <button className="ml-2 underline text-muted" onClick={() => pb.setSpeed(1)}>gốc {baseBpm}</button>}</span></span>
-        <input type="range" min={0.4} max={2} step={0.01} value={pb.speed} className={range} aria-label="Tempo"
+        <input type="range" min={0.4} max={2} step={0.01} value={pb.speed} className="w-full accent-[var(--accent)]" aria-label="Tempo"
           onChange={(e) => pb.setSpeed(Number(e.target.value))} />
+      </section>
+
+      <section>
+        <span className={label}>Xuất nhạc</span>
+        <div className="grid gap-2">
+          <button className="h-9 rounded-md border border-line hover:bg-surface-2 disabled:opacity-40" disabled={busy || pending} onClick={() => void exportMusic(false)}>MIDI</button>
+          <button className="h-9 rounded-md border border-line hover:bg-surface-2 disabled:opacity-40" disabled={busy || pending} onClick={() => void exportMusic(true)}>MIDI + đệm đàn</button>
+        </div>
+        <p className="text-[11px] text-muted mt-1.5">Theo tempo đang chọn.{pending ? ' Chờ nhận dạng xong để xuất đủ bài.' : ''}</p>
       </section>
     </div>
   );
 }
 
-/** "Chuyển sang Editor": cần đăng nhập trước. Bản ảnh/PDF → hộp thoại chuyển (10 credit). */
+/** MIDI của Player: giai điệu (± đệm đàn + dạo đầu, không có tiếng đếm), theo tempo đang chọn */
+export function playerMidi(score: ScoreDocument, withAccompaniment: boolean, settings: PlayerSettings, speed: number): Uint8Array {
+  const base = buildTimeline(score);
+  const tl = withAccompaniment
+    ? accompany(score, base, { ...settings, countIn: false, chordVolume: settings.chordVolume || DEFAULT_PLAYER_SETTINGS.chordVolume }, chordsForAccompaniment(score))
+    : base;
+  const scaled = speed === 1 ? tl : { ...tl, tempo: tl.tempo.map((t) => ({ ...t, bpm: t.bpm * speed })) };
+  return writeMidiFile(timelineToMidiFile(scaled, score.meta.title));
+}
+
+/** "Chuyển sang Editor": cần đăng nhập trước. Bản ảnh/PDF → hộp thoại chuyển (50 credit; admin miễn phí). */
 export function useGoToEditor(openConvert: () => void) {
   const acc = useAccount();
   const project = useActiveProject();
@@ -100,15 +97,6 @@ export function useGoToEditor(openConvert: () => void) {
     st.notify('Đăng nhập để chuyển sang Editor…');
     void acc.login().then(() => useAccount.getState().user && go()).catch((e) => st.notify(String((e as Error).message ?? e), 'error'));
   };
-}
-
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-2 min-h-7">
-      <span className="text-muted">{label}</span>
-      <span>{children}</span>
-    </div>
-  );
 }
 
 /** Bàn phím piano ảo: hiển thị nốt đang phát, chơi thử bằng chuột hoặc phím máy tính (A W S E D F T G Y H U J K) */

@@ -170,12 +170,21 @@ pub async fn omr_run(app: AppHandle, input: String, options: Option<Vec<String>>
     let _ = std::fs::remove_dir_all(&out_dir);
     std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
 
+    let tessdata = app.path().resource_dir().ok().map(|d| d.join("resources").join("tessdata")).filter(|d| d.join("vie.traineddata").is_file());
     tauri::async_runtime::spawn_blocking(move || {
         let mut cmd = Command::new(&exe);
         cmd.env("JAVA_TOOL_OPTIONS", "-Djava.awt.headless=true");
+        // dữ liệu OCR tiếng Việt + tiếng Anh đóng gói kèm (đọc lời ca)
+        if let Some(t) = tessdata.as_ref() {
+            cmd.env("TESSDATA_PREFIX", t);
+        }
         for o in options.unwrap_or_default() {
             if o.contains('=') && !o.contains(char::is_whitespace) {
-                cmd.arg("-option").arg(o);
+                // "const:khoá=giá trị" → -constant (vd ngôn ngữ OCR); còn lại → -option
+                match o.strip_prefix("const:") {
+                    Some(c) => cmd.arg("-constant").arg(c),
+                    None => cmd.arg("-option").arg(o),
+                };
             }
         }
         #[cfg(target_os = "windows")]

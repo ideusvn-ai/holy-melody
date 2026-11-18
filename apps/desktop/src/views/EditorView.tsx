@@ -384,7 +384,7 @@ function useEditorShortcuts() {
         st.exec(deleteEvent(evLoc.event.id));
         return;
       }
-      if (k === 'ArrowRight' || k === 'ArrowLeft') {
+      if ((k === 'ArrowRight' || k === 'ArrowLeft') && !e.altKey) {
         // di chuyển chọn sang event kế tiếp/trước trong cùng voice
         if (!evLoc) return;
         e.preventDefault();
