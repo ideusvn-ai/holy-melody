@@ -332,7 +332,7 @@ export async function openSheet(file: File, h: OpenSheetHandlers): Promise<Score
       try {
         const c = JSON.parse(cached) as { v: number; score: ScoreDocument };
         if (c.v === CACHE_VERSION && c.score.sheet) {
-          c.score.id = newId('s');
+          c.score.id = newId('sc');
           c.score.sheet = { ...c.score.sheet, fileName: file.name, pages };
           setSheetAsset(c.score.id, asset);
           h.onPlaceholder(c.score);
