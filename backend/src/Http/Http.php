@@ -38,6 +38,13 @@ final class Request
         if (isset($_SERVER['CONTENT_TYPE'])) {
             $headers['content-type'] = (string) $_SERVER['CONTENT_TYPE'];
         }
+        // Shared hosting (PHP chạy CGI/FastCGI): Apache có thể bỏ header Authorization → lấy lại từ biến đã chuyển tiếp
+        if (!isset($headers['authorization'])) {
+            $auth = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? (function_exists('getallheaders') ? (getallheaders()['Authorization'] ?? null) : null);
+            if (is_string($auth) && $auth !== '') {
+                $headers['authorization'] = $auth;
+            }
+        }
         $path = parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH) ?: '/';
         return new self(
             strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET')),
