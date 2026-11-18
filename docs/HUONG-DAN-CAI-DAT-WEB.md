@@ -68,7 +68,9 @@ Chọn **một** trong hai cách, tuỳ hosting có cho đổi thư mục gốc 
 | `HM_STORAGE_DIR` | đường dẫn tuyệt đối, ví dụ `/home/USER/holymelody/storage` |
 | `HM_GOOGLE_CLIENT_IDS` | Client ID Google (xem Bước 5), cách nhau bởi dấu phẩy |
 | `HM_WORKER_TOKEN` | chuỗi ngẫu nhiên ≥ 32 ký tự (chỉ cần khi chạy AI Singer) |
-| `HM_ANTHROPIC_API_KEY` | (không bắt buộc) khoá AI để đọc lại vùng nhận dạng khó khi chuyển sang Editor |
+| `HM_OPENAI_API_KEY` | (nên có) khoá OpenAI: AI rà soát + đọc lời ca tiếng Việt khi chuyển sang Editor, và AI Singer |
+| `HM_OPENAI_MODEL` | mô hình đọc ảnh, mặc định `gpt-5.6-sol` |
+| `HM_OPENAI_TTS_MODEL` | mô hình giọng đọc cho AI Singer, mặc định `gpt-4o-mini-tts` (OpenAI báo ngừng ngày 06/01/2027 — khi đó đổi sang mô hình giọng mới) |
 | `HM_SEPAY_*` | thông tin thanh toán SePay (xem Bước 7) |
 
 3. Đặt quyền file `.env` là **600** (chuột phải → Change Permissions).

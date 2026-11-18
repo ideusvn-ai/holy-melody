@@ -30,7 +30,9 @@ Cập nhật: 2026-11-17. Ký hiệu: ✅ xong và đã kiểm chứng · 🟢 x
 | Nhận dạng lại theo vùng (cắt dòng nhạc, phóng to/nhị phân hoá, chạy lại Audiveris, chỉ thay ô lỗi khi số lỗi giảm) | 🟢 chưa chạy thử trong app thật |
 | Đối chiếu thủ công: ảnh gốc từng ô ↔ kết quả, xác nhận/sửa/để sau; lưu kết quả + tọa độ trong dự án (.holymelody dạng zip kèm file gốc) | ✅ preview |
 | OMR 2 mức: Player nhanh (ảnh thu nhỏ về interline ~15 px, đo trên CI: nhanh hơn 20–35%), Editor kỹ (độ phân giải gốc, có lời ca) | ✅ |
-| AI đọc ảnh vùng khó khi sang Editor (máy chủ gọi mô hình đọc ảnh; chỉ nhận khi ít lỗi hơn; giới hạn lượt) | 🟢 cần HM_ANTHROPIC_API_KEY trên máy chủ, chưa chạy thật |
+| AI (OpenAI) khi sang Editor: rà soát từng dòng + đọc lời ca tiếng Việt, song song; chỉ nhận khi ít lỗi hơn, ô đọc khác → Đối chiếu | 🟢 cần HM_OPENAI_API_KEY trên máy chủ, chưa chạy thật với key |
+| AI Singer: OpenAI TTS theo âm tiết + TD-PSOLA trong app, đơn ca/song ca/ca đoàn, đệm SoundFont, nghe thử miễn phí 12 âm tiết | 🟢 DSP có kiểm thử (cao độ ±3%), chưa nghe thử với giọng OpenAI thật |
+| Mở nhanh: hệ thống đầu tiên trước, bộ đệm theo trang, tự chờ phần đang nhận dạng | 🟢 |
 | Player: panel trái (nhạc cụ, âm lượng MIDI, âm lượng hợp âm, transpose, tempo), bỏ mixer + panel phải | ✅ |
 | Đệm hợp âm (bass + hợp âm theo nhịp 4/4, 3/4, 2/4, 6/8…), dạo đầu câu cuối, đếm vào kiểu karaoke trên dòng nhạc đầu | ✅ |
 | Chọn nốt (cả trên ảnh gốc) → Play phát từ nốt đó | ✅ |

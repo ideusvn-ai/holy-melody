@@ -49,8 +49,14 @@ function install_check(string $root, Config $config, ?Db $db, ?\Throwable $dbErr
         } catch (\Throwable) {
         }
         $add('Đã chạy 004_sepay.sql (cổng sepay)', str_contains($gw, 'sepay'), 'Import install.sql (hoặc 004_sepay.sql)');
+        $p = null;
+        try {
+            $p = $db->one("SELECT credit_cost FROM ai_pricing WHERE job_type = 'singer_render'");
+        } catch (\Throwable) {
+        }
+        $add('Đã chạy 005_pricing_openai.sql (Editor 50 credit, AI Singer)', (bool) $p, 'Import 005_pricing_openai.sql');
     }
-    $add('AI đọc ảnh vùng khó: HM_ANTHROPIC_API_KEY', (string) $config->get('HM_ANTHROPIC_API_KEY', '') !== '', 'Không bắt buộc. Có key thì bước Chuyển sang Editor dùng thêm AI', true);
+    $add('AI (OpenAI): HM_OPENAI_API_KEY', (string) $config->get('HM_OPENAI_API_KEY', '') !== '', 'Không bắt buộc nhưng nên có: AI rà soát + đọc lời ca khi chuyển sang Editor, và AI Singer', true);
     $add('HM_WORKER_TOKEN đủ mạnh (≥ 32 ký tự)', strlen((string) $config->get('HM_WORKER_TOKEN', '')) >= 32, 'Chỉ cần khi chạy AI worker (AI Singer)', true);
 
     $okAll = !array_filter($rows, fn ($r) => !$r[1] && !$r[3]);

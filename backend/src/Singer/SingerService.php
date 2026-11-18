@@ -17,6 +17,7 @@ use HolyMelody\Wallet\WalletService;
  */
 final class SingerService
 {
+    public const FREE_PREVIEW = 12;
     private const VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse'];
 
     public function __construct(private Db $db, private Config $config, private WalletService $wallet)
@@ -28,11 +29,11 @@ final class SingerService
         return (new OpenAiClient($this->config))->enabled();
     }
 
-    /** @return array{voices:list<string>, enabled:bool, credits:int} */
+    /** @return array{voices:list<string>, enabled:bool, credits:int, free_preview_syllables:int} */
     public function info(): array
     {
         $row = $this->db->one("SELECT credit_cost FROM ai_pricing WHERE job_type = 'singer_render'");
-        return ['voices' => self::VOICES, 'enabled' => $this->enabled(), 'credits' => $row ? (int) $row['credit_cost'] : 10];
+        return ['voices' => self::VOICES, 'enabled' => $this->enabled(), 'credits' => $row ? (int) $row['credit_cost'] : 10, 'free_preview_syllables' => self::FREE_PREVIEW];
     }
 
     /**
@@ -62,8 +63,9 @@ final class SingerService
             . 'không thêm từ nào khác, không ngắt hơi giữa chừng.' . ($style !== '' ? " Phong cách: $style." : '');
 
         // ---- trừ credit một lần (bản ghi ai_jobs hoàn tất ngay; Idempotency-Key chống trừ hai lần)
+        // nghe thử (≤ 12 âm tiết) miễn phí để người dùng đánh giá chất lượng trước; admin: không giới hạn
         $admin = Admins::is($this->db, $userId);
-        $cost = $admin ? 0 : $this->info()['credits'];
+        $cost = $admin || count($syl) <= self::FREE_PREVIEW ? 0 : $this->info()['credits'];
         [$jobId, $replayed] = $this->db->tx(function (Db $db) use ($userId, $idempotencyKey, $cost, $voice, $syl) {
             $ex = $db->one('SELECT id FROM ai_jobs WHERE user_id = ? AND idempotency_key = ?', [$userId, $idempotencyKey]);
             if ($ex) {

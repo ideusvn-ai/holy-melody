@@ -21,3 +21,5 @@ export * from './accompaniment.js';
 export * from './input.js';
 export * from './interline.js';
 export * from './systems.js';
+export * from './vocal.js';
+export * from './singer.js';
