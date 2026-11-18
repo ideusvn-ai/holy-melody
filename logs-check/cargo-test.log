@@ -1,0 +1,39 @@
+[1m[92m   Compiling[0m tauri-utils v2.10.4
+[1m[92m   Compiling[0m tauri-runtime v2.12.4
+[1m[92m   Compiling[0m tauri-runtime-wry v2.12.5
+[1m[92m   Compiling[0m tauri-plugin v2.7.4
+[1m[92m   Compiling[0m tauri-codegen v2.7.6
+[1m[92m   Compiling[0m tauri-build v2.7.6
+[1m[92m   Compiling[0m tauri v2.12.7
+[1m[92m   Compiling[0m tauri-plugin-fs v2.7.1
+[1m[92m   Compiling[0m tauri-plugin-dialog v2.8.4
+[1m[92m   Compiling[0m tauri-macros v2.7.6
+[1m[92m   Compiling[0m holy-melody v0.1.0 (/home/runner/work/holy-melody/holy-melody/apps/desktop/src-tauri)
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 22.68s
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/build/holy-melody/43e6dc00d8b98c85/out/holy_melody_lib-43e6dc00d8b98c85)
+
+running 9 tests
+test account::tests::url_codec ... ok
+test audio::tests::wav_header_is_valid ... ok
+test auth::tests::pkce_lengths ... ok
+test audio::tests::events_sorted_off_before_on ... ok
+test omr::tests::cache_keys ... ok
+test auth::tests::pkce_rfc7636_appendix_b ... ok
+test omr::tests::stages ... ok
+test files::tests::decode ... ok
+test audio::limiter_tests::never_exceeds_ceiling_and_recovers ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+[1m[92m     Running[0m unittests src/main.rs (target/debug/build/holy-melody/9b633e38468eeeaa/out/holy_melody-9b633e38468eeeaa)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m holy_melody_lib
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

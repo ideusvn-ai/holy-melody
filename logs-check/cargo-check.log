@@ -1,0 +1,39 @@
+[1m[92m    Updating[0m crates.io index
+[1m[91merror[0m: cannot create the lock file /home/runner/work/holy-melody/holy-melody/apps/desktop/src-tauri/Cargo.lock because --locked was passed to prevent this
+help: to generate the lock file without accessing the network, remove the --locked flag and use --offline instead.
+[1m[92m    Updating[0m crates.io index
+[1m[92m     Locking[0m 519 packages to highest compatible versions
+[1m[92m      Adding[0m base64 v0.22.1 [1m[33m(available: v0.23.1)[0m
+[1m[92m      Adding[0m cpal v0.15.3 [1m[33m(available: v0.18.2)[0m
+[1m[92m      Adding[0m generic-array v0.14.7 [1m[33m(available: v0.14.9)[0m
+[1m[92m      Adding[0m keyring v3.6.3 [1m[33m(available: v4.2.0)[0m
+[1m[92m      Adding[0m midir v0.10.4 [1m[33m(available: v0.11.1)[0m
+[1m[92m      Adding[0m rand v0.8.8 [1m[33m(available: v0.10.4)[0m
+[1m[92m      Adding[0m rusqlite v0.32.1 [1m[33m(available: v0.43.0)[0m
+[1m[92m      Adding[0m sha2 v0.10.9 [1m[33m(available: v0.11.1)[0m
+[1m[92m      Adding[0m thiserror v1.0.69 [1m[33m(available: v2.0.21)[0m
+[1m[92m      Adding[0m toml v0.8.2 [1m[33m(available: v0.8.23)[0m
+[1m[92m      Adding[0m toml_datetime v0.6.3 [1m[33m(available: v0.6.11)[0m
+[1m[92m      Adding[0m toml_edit v0.20.2 [1m[33m(available: v0.20.7)[0m
+[1m[92m      Adding[0m ureq v2.12.1 [1m[33m(available: v3.5.2)[0m
+[1m[92m Downloading[0m crates ...
+[1m[92m  Downloaded[0m tauri-plugin v2.7.4
+[1m[92m  Downloaded[0m tauri-macros v2.7.6
+[1m[92m  Downloaded[0m tauri-runtime-wry v2.12.5
+[1m[92m  Downloaded[0m tauri-runtime v2.12.4
+[1m[92m  Downloaded[0m tauri-build v2.7.6
+[1m[92m  Downloaded[0m tauri-codegen v2.7.6
+[1m[92m  Downloaded[0m tauri-utils v2.10.4
+[1m[92m  Downloaded[0m tauri v2.12.7
+[1m[92m   Compiling[0m tauri-utils v2.10.4
+[1m[92m   Compiling[0m tauri-runtime v2.12.4
+[1m[92m   Compiling[0m tauri-runtime-wry v2.12.5
+[1m[92m   Compiling[0m tauri-plugin v2.7.4
+[1m[92m   Compiling[0m tauri-codegen v2.7.6
+[1m[92m   Compiling[0m tauri-build v2.7.6
+[1m[92m   Compiling[0m tauri v2.12.7
+[1m[92m   Compiling[0m tauri-plugin-fs v2.7.1
+[1m[92m   Compiling[0m tauri-plugin-dialog v2.8.4
+[1m[92m   Compiling[0m tauri-macros v2.7.6
+[1m[92m   Compiling[0m holy-melody v0.1.0 (/home/runner/work/holy-melody/holy-melody/apps/desktop/src-tauri)
+[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 16.12s

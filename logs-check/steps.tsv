@@ -1,0 +1,9 @@
+npm-install	0	11s
+test-core	0	3s
+test-backend	0	0s
+typecheck-ui	2	5s
+icons	0	3s
+soundfont	0	1s
+vite-build	0	5s
+cargo-check	0	17s
+cargo-test	0	23s

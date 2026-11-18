@@ -1,0 +1,24 @@
+
+> @holy-melody/desktop@0.1.0 build
+> vite build
+
+[36mvite v7.3.8 [32mbuilding client environment for production...[36m[39m
+transforming...
+[32m✓[39m 100 modules transformed.
+rendering chunks...
+[33m[plugin vite:reporter] 
+(!) /home/runner/work/holy-melody/holy-melody/apps/desktop/src/lib/autosave.ts is dynamically imported by /home/runner/work/holy-melody/holy-melody/apps/desktop/src/state/store.ts, /home/runner/work/holy-melody/holy-melody/apps/desktop/src/state/store.ts but also statically imported by /home/runner/work/holy-melody/holy-melody/apps/desktop/src/App.tsx, dynamic import will not move module into another chunk.
+[39m
+computing gzip size...
+[2mdist/[22m[32mindex.html                          [39m[1m[2m    0.40 kB[22m[1m[22m[2m │ gzip:   0.27 kB[22m
+[2mdist/[22m[2massets/[22m[32mpdf.worker.min-CIqJB0yW.mjs  [39m[1m[2m1,271.92 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[35mindex-DcVjDiEN.css           [39m[1m[2m   35.88 kB[22m[1m[22m[2m │ gzip:   7.66 kB[22m
+[2mdist/[22m[2massets/[22m[36mevent-CBiJzWLy.js            [39m[1m[2m    1.53 kB[22m[1m[22m[2m │ gzip:   0.72 kB[22m[2m │ map:    29.34 kB[22m
+[2mdist/[22m[2massets/[22m[36mpdf-4ks0I6Hy.js              [39m[1m[2m  450.89 kB[22m[1m[22m[2m │ gzip: 135.45 kB[22m[2m │ map: 1,552.49 kB[22m
+[2mdist/[22m[2massets/[22m[36mindex-A-yV4-0X.js            [39m[1m[33m  747.14 kB[39m[22m[2m │ gzip: 243.93 kB[22m[2m │ map: 2,950.49 kB[22m
+[33m
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m
+[32m✓ built in 4.58s[39m

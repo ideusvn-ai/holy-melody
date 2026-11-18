@@ -1,0 +1,74 @@
+
+> @holy-melody/desktop@0.1.0 tauri
+> tauri build --target x86_64-apple-darwin
+
+        Info Looking up installed tauri packages to check mismatched versions...
+     Running beforeBuildCommand `npm run build`
+
+> @holy-melody/desktop@0.1.0 build
+> vite build
+
+[36mvite v7.3.8 [32mbuilding client environment for production...[36m[39m
+transforming...
+[32m✓[39m 100 modules transformed.
+rendering chunks...
+[33m[plugin vite:reporter] 
+(!) /Users/runner/work/holy-melody/holy-melody/apps/desktop/src/lib/autosave.ts is dynamically imported by /Users/runner/work/holy-melody/holy-melody/apps/desktop/src/state/store.ts, /Users/runner/work/holy-melody/holy-melody/apps/desktop/src/state/store.ts but also statically imported by /Users/runner/work/holy-melody/holy-melody/apps/desktop/src/App.tsx, dynamic import will not move module into another chunk.
+[39m
+computing gzip size...
+[2mdist/[22m[32mindex.html                          [39m[1m[2m    0.40 kB[22m[1m[22m[2m │ gzip:   0.27 kB[22m
+[2mdist/[22m[2massets/[22m[32mpdf.worker.min-CIqJB0yW.mjs  [39m[1m[2m1,271.92 kB[22m[1m[22m
+[2mdist/[22m[2massets/[22m[35mindex-DcVjDiEN.css           [39m[1m[2m   35.88 kB[22m[1m[22m[2m │ gzip:   7.66 kB[22m
+[2mdist/[22m[2massets/[22m[36mevent-CBiJzWLy.js            [39m[1m[2m    1.53 kB[22m[1m[22m[2m │ gzip:   0.72 kB[22m[2m │ map:    29.34 kB[22m
+[2mdist/[22m[2massets/[22m[36mpdf-4ks0I6Hy.js              [39m[1m[2m  450.89 kB[22m[1m[22m[2m │ gzip: 135.45 kB[22m[2m │ map: 1,552.49 kB[22m
+[2mdist/[22m[2massets/[22m[36mindex-A-yV4-0X.js            [39m[1m[33m  747.14 kB[39m[22m[2m │ gzip: 243.93 kB[22m[2m │ map: 2,950.49 kB[22m
+[33m
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m
+[32m✓ built in 13.50s[39m
+[1m[92m    Updating[0m crates.io index
+[1m[92m     Locking[0m 519 packages to highest compatible versions
+[1m[92m      Adding[0m base64 v0.22.1 [1m[33m(available: v0.23.1)[0m
+[1m[92m      Adding[0m cpal v0.15.3 [1m[33m(available: v0.18.2)[0m
+[1m[92m      Adding[0m generic-array v0.14.7 [1m[33m(available: v0.14.9)[0m
+[1m[92m      Adding[0m keyring v3.6.3 [1m[33m(available: v4.2.0)[0m
+[1m[92m      Adding[0m midir v0.10.4 [1m[33m(available: v0.11.1)[0m
+[1m[92m      Adding[0m rand v0.8.8 [1m[33m(available: v0.10.4)[0m
+[1m[92m      Adding[0m rusqlite v0.32.1 [1m[33m(available: v0.43.0)[0m
+[1m[92m      Adding[0m sha2 v0.10.9 [1m[33m(available: v0.11.1)[0m
+[1m[92m      Adding[0m thiserror v1.0.69 [1m[33m(available: v2.0.21)[0m
+[1m[92m      Adding[0m toml v0.8.2 [1m[33m(available: v0.8.23)[0m
+[1m[92m      Adding[0m toml_datetime v0.6.3 [1m[33m(available: v0.6.11)[0m
+[1m[92m      Adding[0m toml_edit v0.20.2 [1m[33m(available: v0.20.7)[0m
+[1m[92m      Adding[0m ureq v2.12.1 [1m[33m(available: v3.5.2)[0m
+[1m[92m Downloading[0m crates ...
+[1m[92m  Downloaded[0m tauri-plugin v2.7.4
+[1m[92m  Downloaded[0m tauri-codegen v2.7.6
+[1m[92m  Downloaded[0m tauri-build v2.7.6
+[1m[92m  Downloaded[0m tauri-macros v2.7.6
+[1m[92m  Downloaded[0m tauri v2.12.7
+[1m[92m  Downloaded[0m tauri-runtime-wry v2.12.5
+[1m[92m  Downloaded[0m tauri-runtime v2.12.4
+[1m[92m  Downloaded[0m tauri-utils v2.10.4
+[1m[92m   Compiling[0m tauri-utils v2.10.4
+[1m[92m   Compiling[0m tauri-runtime v2.12.4
+[1m[92m   Compiling[0m tauri-runtime-wry v2.12.5
+[1m[92m   Compiling[0m tauri-plugin v2.7.4
+[1m[92m   Compiling[0m tauri-codegen v2.7.6
+[1m[92m   Compiling[0m tauri-build v2.7.6
+[1m[92m   Compiling[0m tauri v2.12.7
+[1m[92m   Compiling[0m tauri-plugin-fs v2.7.1
+[1m[92m   Compiling[0m tauri-macros v2.7.6
+[1m[92m   Compiling[0m tauri-plugin-dialog v2.8.4
+[1m[92m   Compiling[0m holy-melody v0.1.0 (/Users/runner/work/holy-melody/holy-melody/apps/desktop/src-tauri)
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 7m 03s
+       Built application at: /Users/runner/work/holy-melody/holy-melody/apps/desktop/src-tauri/target/x86_64-apple-darwin/release/holy-melody
+    Bundling Holy Melody.app (/Users/runner/work/holy-melody/holy-melody/apps/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/macos/Holy Melody.app)
+    Bundling Holy Melody_0.1.0_x64.dmg (/Users/runner/work/holy-melody/holy-melody/apps/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Holy Melody_0.1.0_x64.dmg)
+     Running bundle_dmg.sh
+    Finished 2 bundles at:
+        /Users/runner/work/holy-melody/holy-melody/apps/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/macos/Holy Melody.app (233.21 MiB)
+        /Users/runner/work/holy-melody/holy-melody/apps/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Holy Melody_0.1.0_x64.dmg (127.75 MiB)
+

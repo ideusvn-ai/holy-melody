@@ -1,0 +1,26 @@
+
+IntegrationTest.php
+  ✔ [DB] tài khoản mới nhận 100 credit đúng một lần, khóa theo sub
+  ✔ [DB] chuyển sang Edit trừ 50 credit đúng một lần cho mỗi file gốc; admin miễn phí
+  ✔ [DB] không thể âm credit; idempotency key không trừ hai lần
+  ✔ [DB] AI job: retry cùng Idempotency-Key không trừ lại; lỗi hệ thống hoàn đúng một lần; hủy hoàn credit
+  ✔ [DB] thiếu credit thì không tạo job
+  ✔ [DB] SePay: webhook lặp lại chỉ cộng credit một lần; thiếu tiền / sai chữ ký / tiền ra không cộng
+  ✔ [DB] trừ credit song song (5 tiến trình) không làm số dư âm
+  ✔ [DB] loại AI chưa bật trên máy chủ: từ chối và KHÔNG trừ credit
+
+UnitTest.php
+  ✔ JWK → PEM khớp khóa công khai gốc
+  ✔ ID token hợp lệ được chấp nhận (web và desktop client)
+  ✔ từ chối: sai chữ ký, sai aud, sai iss, hết hạn, alg none, kid lạ, payload bị sửa
+  ✔ verifier từ chối khởi tạo khi chưa cấu hình client ID
+  ✔ SePay: HMAC-SHA256 đúng định dạng sha256=hex(timestamp.body); chống phát lại 5 phút; sửa thân bị phát hiện
+  ✔ SePay: API key; chưa cấu hình xác thực thì không bao giờ hợp lệ
+  ✔ SePay: chỉ nhận tiền VÀO đúng tài khoản; lấy mã từ nội dung khi trường code trống
+  ✔ SePay: mã thanh toán khó đoán, trang QR đúng tham số
+  ✔ router: tham số đường dẫn, 404, 405, lỗi API → JSON
+  ✔ request: bearer token, JSON lỗi
+  ✔ AI: loại tác vụ chưa bật bị từ chối trước khi chạm CSDL
+  ✔ AI OMR: lấy khối MusicXML hợp lệ từ câu trả lời của mô hình
+
+20 passed, 0 failed, 0 skipped

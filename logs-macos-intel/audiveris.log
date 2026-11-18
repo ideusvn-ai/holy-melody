@@ -1,0 +1,16 @@
+Audiveris 5.11.0 – các file:
+  Audiveris-5.11.0-macosx-arm64.dmg  84.9 MB
+  Audiveris-5.11.0-macosx-x86_64.dmg  87.1 MB
+  Audiveris-5.11.0-ubuntu22.04-x86_64.deb  78.0 MB
+  Audiveris-5.11.0-ubuntu24.04-x86_64.deb  77.7 MB
+  Audiveris-5.11.0-windows-x86_64.msi  85.1 MB
+  Audiveris-5.11.0-windowsConsole-x86_64.msi  85.1 MB
+  Audiveris_Handbook.pdf  14.3 MB
+  Audiveris_Schemas_Doc-5.11.0.zip  1.1 MB
+Chọn: Audiveris-5.11.0-macosx-x86_64.dmg
+Đã tải 87.1 MB
+/dev/disk2          	GUID_partition_scheme          	
+/dev/disk2s1        	Apple_HFS                      	/private/var/folders/20/jp1_0n3n7kndh6rnbqb5344m0000gn/T/audiveris-1795006588444/mnt
+Đã giải nén vào /Users/runner/work/holy-melody/holy-melody/apps/desktop/src-tauri/resources/audiveris → Audiveris.app/Contents/MacOS/Audiveris
+OCR vie 7763728 bytes
+OCR eng 23466654 bytes
