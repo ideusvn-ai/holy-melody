@@ -57,7 +57,7 @@ final class AiJobService
             if ($existing) {
                 return self::publicJob($existing) + ['replayed' => true];
             }
-            $cost = $this->price($type);
+            $cost = \HolyMelody\Auth\Admins::is($db, $userId) ? 0 : $this->price($type); // admin: không giới hạn credit
             $db->exec(
                 'INSERT INTO ai_jobs (user_id, job_type, input_reference, params, status, credit_cost, idempotency_key) VALUES (?, ?, ?, ?, \'pending\', ?, ?)',
                 [$userId, $type, $inputReference, json_encode($params, JSON_UNESCAPED_UNICODE), $cost, $idempotencyKey],

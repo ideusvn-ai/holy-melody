@@ -8,12 +8,12 @@ use HolyMelody\ApiException;
 use HolyMelody\Wallet\WalletService;
 
 /**
- * Trừ credit khi người dùng chuyển một bản nhạc ảnh/PDF sang chế độ biên tập.
+ * Trừ credit (mặc định 50) khi người dùng chuyển một bản nhạc ảnh/PDF sang chế độ biên tập. Admin: miễn phí.
  * Mỗi (người dùng, file gốc) chỉ bị trừ một lần: gọi lại (mất mạng, bấm hai lần, mở lại dự án) trả kết quả cũ.
  */
 final class OmrConversionService
 {
-    public const DEFAULT_COST = 10;
+    public const DEFAULT_COST = 50;
 
     public function __construct(private Db $db, private WalletService $wallet)
     {
@@ -39,7 +39,8 @@ final class OmrConversionService
                 $tx = $db->one("SELECT id FROM credit_transactions WHERE reference_type = 'omr_conversion' AND reference_id = ? AND type = 'omr_charge'", [(int) $existing['id']]);
                 return self::out($existing, $tx ? (int) $tx['id'] : null, true);
             }
-            $cost = $this->price();
+            // tài khoản quản trị: không trừ credit
+            $cost = \HolyMelody\Auth\Admins::is($db, $userId) ? 0 : $this->price();
             $db->exec(
                 'INSERT INTO omr_conversions (user_id, source_hash, title, pages, measures, credit_cost) VALUES (?, ?, ?, ?, ?, ?)',
                 [$userId, $sourceHash, $title, max(1, $pages), max(0, $measures), $cost],

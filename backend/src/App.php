@@ -191,7 +191,8 @@ final class App
         // ---- tài khoản & credit
         $r->add('GET', '/api/v1/me', function (Request $req) {
             $u = $this->db->one('SELECT id, email, name, avatar_url, created_at FROM users WHERE id = ?', [$req->auth['user_id']]);
-            return ['user' => $u, 'balance' => $this->wallet()->balance($req->auth['user_id'])];
+            $admin = \HolyMelody\Auth\Admins::is($this->db, $req->auth['user_id']);
+            return ['user' => $u, 'balance' => $this->wallet()->balance($req->auth['user_id']), 'is_admin' => $admin, 'unlimited' => $admin];
         }, [$user]);
         $r->add('GET', '/api/v1/me/transactions', fn (Request $req) => [
             'items' => $this->wallet()->history($req->auth['user_id'], (int) ($req->query['limit'] ?? 50), isset($req->query['before']) ? (int) $req->query['before'] : null),
@@ -277,9 +278,24 @@ final class App
 
         // ---- AI đọc lại vùng khó (sau khi đã chuyển sang Editor)
         $r->add('GET', '/api/v1/omr/ai-status', fn () => ['enabled' => (new \HolyMelody\Omr\OmrAiService($this->db, $this->config))->enabled()]);
+        $r->add('POST', '/api/v1/omr/ai-lyrics', function (Request $req) {
+            $this->limiter()->hit('omr-ai:' . $req->auth['user_id'], 60, 300);
+            return (new \HolyMelody\Omr\OmrAiService($this->db, $this->config))->lyrics($req->auth['user_id'], $req->json());
+        }, [$user]);
         $r->add('POST', '/api/v1/omr/ai-region', function (Request $req) {
-            $this->limiter()->hit('omr-ai:' . $req->auth['user_id'], 30, 300);
+            $this->limiter()->hit('omr-ai:' . $req->auth['user_id'], 60, 300);
             return (new \HolyMelody\Omr\OmrAiService($this->db, $this->config))->rerecognize($req->auth['user_id'], $req->json());
+        }, [$user]);
+
+        // ---- AI Singer (OpenAI TTS theo âm tiết; app tự dựng cao độ/nhịp)
+        $r->add('GET', '/api/v1/singer/info', fn () => (new \HolyMelody\Singer\SingerService($this->db, $this->config, $this->wallet()))->info());
+        $r->add('POST', '/api/v1/singer/voice', function (Request $req) {
+            $key = (string) ($req->header('idempotency-key') ?? '');
+            if (!preg_match('/^[A-Za-z0-9_\-]{8,100}$/', $key)) {
+                throw new ApiException(400, 'INVALID_IDEMPOTENCY_KEY', 'Thiếu header Idempotency-Key');
+            }
+            $this->limiter()->hit('singer:' . $req->auth['user_id'], 20, 600);
+            return (new \HolyMelody\Singer\SingerService($this->db, $this->config, $this->wallet()))->renderVoice($req->auth['user_id'], $req->json(), $key);
         }, [$user]);
 
         // ---- AI jobs
