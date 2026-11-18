@@ -68,3 +68,5 @@ Cập nhật: 2026-11-17. Ký hiệu: ✅ xong và đã kiểm chứng · 🟢 x
 4. Chọn nhà cung cấp giọng hát AI tiếng Việt theo nốt (hoặc huấn luyện DiffSinger với dữ liệu ca sĩ có hợp đồng).
 5. Mua Apple Developer ID và chứng chỉ ký mã Windows.
 6. Quyết định pháp lý về Audiveris (AGPL) nếu muốn đóng gói kèm thay vì người dùng tự cài.
+
+| Thanh toán chuyển sang SePay (VietQR + webhook HMAC/API key, trang /pay có QR + tự cập nhật) | 🟢 kiểm thử đơn vị + CSDL; cần thử với tài khoản SePay thật / Test mode |

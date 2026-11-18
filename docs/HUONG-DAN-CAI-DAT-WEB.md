@@ -69,7 +69,7 @@ Chọn **một** trong hai cách, tuỳ hosting có cho đổi thư mục gốc 
 | `HM_GOOGLE_CLIENT_IDS` | Client ID Google (xem Bước 5), cách nhau bởi dấu phẩy |
 | `HM_WORKER_TOKEN` | chuỗi ngẫu nhiên ≥ 32 ký tự (chỉ cần khi chạy AI Singer) |
 | `HM_ANTHROPIC_API_KEY` | (không bắt buộc) khoá AI để đọc lại vùng nhận dạng khó khi chuyển sang Editor |
-| Khoá **PayOS / VNPay / MoMo** | điền cổng bạn dùng; nên thử bằng khoá **sandbox** trước |
+| `HM_SEPAY_*` | thông tin thanh toán SePay (xem Bước 7) |
 
 3. Đặt quyền file `.env` là **600** (chuột phải → Change Permissions).
 
@@ -101,16 +101,31 @@ Chọn **một** trong hai cách, tuỳ hosting có cho đổi thư mục gốc 
    ```
 3. Vào `https://ten-mien-cua-ban.vn/admin` để quản lý người dùng, đơn hàng, gói credit và bản phát hành.
 
-## Bước 7: Thanh toán (khi sẵn sàng)
-Khai báo URL nhận thông báo (webhook/IPN) trong trang quản trị của cổng thanh toán:
+## Bước 7: Thanh toán qua SePay
+SePay theo dõi tài khoản ngân hàng của bạn. Khi khách chuyển khoản đúng nội dung, SePay báo về website và credit được cộng ngay. Tiền vào **thẳng tài khoản của bạn**, không qua trung gian.
 
-| Cổng | URL |
-|---|---|
-| PayOS | `https://ten-mien-cua-ban.vn/api/v1/webhooks/payos` |
-| VNPay (IPN) | `https://ten-mien-cua-ban.vn/api/v1/webhooks/vnpay` |
-| MoMo | tự gửi kèm khi tạo đơn: `https://ten-mien-cua-ban.vn/api/v1/webhooks/momo` |
+1. **Đăng ký và liên kết ngân hàng:** vào https://my.sepay.vn, đăng ký, rồi **Ngân hàng → Kết nối tài khoản** (MB, ACB, TPBank, Vietcombank, VietinBank… theo danh sách SePay hỗ trợ).
+2. **Cấu hình mã thanh toán:** **Công ty → Cấu hình chung → Cấu trúc mã thanh toán**:
+   - **Bật** nhận diện mã thanh toán
+   - Tiền tố: **`HM`** (trùng `HM_SEPAY_CODE_PREFIX`)
+   - Hậu tố: **10 ký tự số**
+3. **Tạo webhook:** **Webhooks → Thêm webhook**:
+   - **URL:** `https://ten-mien-cua-ban.vn/api/v1/webhooks/sepay`
+   - **Loại giao dịch:** Tiền vào · **Tài khoản:** tài khoản ở bước 1
+   - Tích **Chỉ gửi khi có mã thanh toán**
+   - **Kiểu nội dung:** JSON
+   - **Bảo mật:** chọn **HMAC-SHA256** (khuyên dùng) rồi chép *Secret* vào `HM_SEPAY_WEBHOOK_SECRET`, hoặc chọn **API Key** rồi chép key vào `HM_SEPAY_API_KEY`.
+4. **Điền `.env`:**
+   ```
+   HM_SEPAY_BANK=MBBank                (mã ngắn ngân hàng, xem qr.sepay.vn/banks.json)
+   HM_SEPAY_ACCOUNT_NUMBER=0123456789  (số tài khoản đã liên kết)
+   HM_SEPAY_ACCOUNT_NAME=NGUYEN VAN A  (tên chủ tài khoản, hiện cho khách xem)
+   HM_SEPAY_WEBHOOK_SECRET=...         (hoặc HM_SEPAY_API_KEY=...)
+   ```
+5. **Thử:** đăng nhập website → **Bảng giá** → chọn gói. Trang thanh toán hiện mã QR, số tiền và nội dung `HM…`. Quét bằng app ngân hàng (thử gói nhỏ nhất). Trang tự chuyển sang **Thanh toán thành công** khi tiền vào.
+   - Có thể thử không mất tiền bằng **Chế độ thử nghiệm (Test mode)** của SePay → *Mô phỏng giao dịch* với nội dung là mã `HM…` của đơn.
 
-Thử trên **sandbox** trước. Credit chỉ được cộng khi chữ ký hợp lệ, đúng số tiền và đúng đơn; mọi thông báo đều được lưu lại để đối soát.
+Quy tắc cộng credit: chỉ cộng khi **chữ ký webhook hợp lệ**, là **tiền vào**, **đúng số tài khoản**, **đúng mã** và **đủ số tiền**. Mỗi giao dịch chỉ được cộng một lần, dù SePay gửi lại bao nhiêu lần. Chuyển thiếu thì không cộng; chuyển dư thì vẫn cộng gói và ghi lại số tiền thật. Mọi webhook đều được lưu ở **Quản trị → Thanh toán** để đối soát.
 
 ## Bước 8: Đăng bản tải app
 Trang **/download** lấy thông tin từ mục **Quản trị → Bản phát hành**. Thêm bản mới với link tải từ GitHub Releases, ví dụ:
@@ -126,6 +141,7 @@ Trang **/download** lấy thông tin từ mục **Quản trị → Bản phát h
 | `/pricing` hoặc `/api/...` báo 404 | Thiếu file `.htaccess` (bật *Show Hidden Files* rồi chép lại) hoặc hosting tắt mod_rewrite |
 | `DB_UNAVAILABLE` | Sai thông tin CSDL trong `.env`, hoặc chưa Add User To Database |
 | Lỗi khi Import SQL ở `SKIP LOCKED` | MariaDB quá cũ, cần nhờ nhà cung cấp nâng lên 10.6+ |
+| Đã chuyển khoản nhưng chưa được cộng credit | Xem **Quản trị → Thanh toán**: `invalid_signature` = sai secret/API key; `unknown_order` = nội dung không có mã `HM…`; `amount_mismatch` = chuyển thiếu. Trên my.sepay.vn → Webhooks → Nhật ký để xem SePay đã gửi chưa |
 | App desktop báo chưa đăng nhập được | Kiểm tra `HM_GOOGLE_CLIENT_IDS` và các GitHub Secrets ở Bước 5, rồi build lại app |
 | Website bị chuyển vòng lặp HTTPS | Xoá 4 dòng "bắt buộc HTTPS" trong `.htaccess` (hosting đã tự chuyển) |
 

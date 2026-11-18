@@ -5,22 +5,23 @@ namespace HolyMelody\Payments;
 
 /**
  * Adapter cổng thanh toán. Mỗi cổng:
- *  - createCheckout(): tạo yêu cầu thanh toán phía cổng, trả URL/QR
- *  - parseNotification(): xác minh chữ ký webhook/IPN và chuẩn hóa dữ liệu
- * Công thức ký theo tài liệu công khai của từng cổng; PHẢI đối chiếu lại với tài liệu sandbox
- * hiện hành khi tích hợp (Phase 6) vì cổng có thể đổi phiên bản API.
+ *  - orderCode(): mã đơn gửi cho cổng (với SePay: mã thanh toán nằm trong nội dung chuyển khoản)
+ *  - createCheckout(): tạo trang/QR thanh toán
+ *  - parseNotification(): xác minh webhook (chữ ký trên THÂN REQUEST THÔ + header) và chuẩn hoá dữ liệu
  */
 interface PaymentGateway
 {
     public function name(): string;
 
+    public function orderCode(int $orderId): string;
+
     /** @return array{checkout_url:string, gateway_payload:array<string,mixed>} */
     public function createCheckout(string $gatewayOrderId, int $amountVnd, string $description, string $returnUrl, string $cancelUrl): array;
 
     /**
-     * @param array<string,mixed>|array<string,string> $input body JSON (PayOS, MoMo) hoặc query (VNPay)
+     * @param array<string,mixed> $input body JSON đã giải mã; $rawBody + $headers dùng để kiểm chữ ký
      */
-    public function parseNotification(array $input): Notification;
+    public function parseNotification(array $input, string $rawBody = '', array $headers = []): Notification;
 }
 
 final class Notification
@@ -64,188 +65,115 @@ final class CurlHttpClient implements HttpClient
     }
 }
 
-// ============================================================================ PayOS (VietQR có đối soát)
+// ============================================================================ SePay (chuyển khoản VietQR + webhook)
 
-final class PayOsGateway implements PaymentGateway
+/**
+ * SePay theo dõi tài khoản ngân hàng của bạn và gửi webhook khi có tiền vào (https://developer.sepay.vn).
+ * Khách quét VietQR (qr.sepay.vn) → chuyển khoản với nội dung chứa mã thanh toán → SePay gửi webhook.
+ *
+ * Xác thực webhook (chọn trong my.sepay.vn → Webhooks → Bảo mật):
+ *  - HMAC-SHA256 (khuyên dùng): header X-Sepay-Signature = "sha256=" + hex(HMAC(secret, timestamp + "." + body)),
+ *    X-Sepay-Timestamp lệch quá 300 giây bị từ chối (chống phát lại);
+ *  - hoặc API Key: header "Authorization: Apikey <KEY>".
+ * Chỉ chấp nhận: tiền VÀO, đúng số tài khoản của bạn, đúng mã thanh toán, đúng số tiền (kiểm ở PaymentService).
+ */
+final class SePayGateway implements PaymentGateway
 {
+    /** @param \Closure():int|null $clock */
     public function __construct(
-        private readonly string $clientId,
-        private readonly string $apiKey,
-        private readonly string $checksumKey,
-        private readonly HttpClient $http,
-        private readonly string $baseUrl = 'https://api-merchant.payos.vn',
-    ) {
-    }
-
-    public function name(): string
-    {
-        return 'payos';
-    }
-
-    public function createCheckout(string $gatewayOrderId, int $amountVnd, string $description, string $returnUrl, string $cancelUrl): array
-    {
-        $orderCode = (int) $gatewayOrderId;
-        $description = mb_substr($description, 0, 25);
-        $sig = hash_hmac('sha256', "amount=$amountVnd&cancelUrl=$cancelUrl&description=$description&orderCode=$orderCode&returnUrl=$returnUrl", $this->checksumKey);
-        $res = $this->http->postJson($this->baseUrl . '/v2/payment-requests', [
-            'orderCode' => $orderCode, 'amount' => $amountVnd, 'description' => $description,
-            'returnUrl' => $returnUrl, 'cancelUrl' => $cancelUrl, 'signature' => $sig,
-        ], ['x-client-id' => $this->clientId, 'x-api-key' => $this->apiKey]);
-        if (($res['code'] ?? '') !== '00' || !isset($res['data']['checkoutUrl'])) {
-            throw new \HolyMelody\ApiException(502, 'GATEWAY_ERROR', 'PayOS từ chối tạo thanh toán: ' . ($res['desc'] ?? 'không rõ'));
-        }
-        return ['checkout_url' => (string) $res['data']['checkoutUrl'], 'gateway_payload' => $res['data']];
-    }
-
-    /** Chữ ký webhook: HMAC-SHA256 của data sắp xếp theo khóa dạng k=v&… (null → chuỗi rỗng) */
-    public static function signData(array $data, string $key): string
-    {
-        ksort($data);
-        $parts = [];
-        foreach ($data as $k => $v) {
-            if (is_array($v)) {
-                $v = json_encode($v, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-            } elseif ($v === null || $v === 'null' || $v === 'undefined') {
-                $v = '';
-            } elseif (is_bool($v)) {
-                $v = $v ? 'true' : 'false';
-            }
-            $parts[] = "$k=$v";
-        }
-        return hash_hmac('sha256', implode('&', $parts), $key);
-    }
-
-    public function parseNotification(array $input): Notification
-    {
-        $data = is_array($input['data'] ?? null) ? $input['data'] : [];
-        $sig = (string) ($input['signature'] ?? '');
-        $valid = $sig !== '' && $data && hash_equals(self::signData($data, $this->checksumKey), $sig);
-        $success = ($input['code'] ?? '') === '00' && ($data['code'] ?? '') === '00';
-        return new Notification(
-            $valid, $success,
-            (string) ($data['orderCode'] ?? ''),
-            (int) ($data['amount'] ?? 0),
-            (string) ($data['reference'] ?? ''),
-            'payos:' . ($data['paymentLinkId'] ?? '') . ':' . ($data['reference'] ?? ''),
-        );
-    }
-}
-
-// ============================================================================ VNPay
-
-final class VnpayGateway implements PaymentGateway
-{
-    public function __construct(
-        private readonly string $tmnCode,
-        private readonly string $hashSecret,
-        private readonly string $payUrl = 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
+        private readonly string $bank,
+        private readonly string $accountNumber,
+        private readonly string $accountName,
+        private readonly string $publicUrl,
+        private readonly string $hmacSecret = '',
+        private readonly string $apiKey = '',
+        private readonly string $prefix = 'HM',
         private readonly ?\Closure $clock = null,
     ) {
     }
 
     public function name(): string
     {
-        return 'vnpay';
+        return 'sepay';
     }
 
-    /** Chuỗi ký: các tham số vnp_* sắp xếp theo khóa, urlencode, nối bằng & ; HMAC-SHA512 */
-    public static function sign(array $params, string $secret): string
+    /** Mã thanh toán: tiền tố + 6 số id đơn + 4 số ngẫu nhiên (khó đoán), vd HM0000421234 */
+    public function orderCode(int $orderId): string
     {
-        unset($params['vnp_SecureHash'], $params['vnp_SecureHashType']);
-        $params = array_filter($params, static fn ($v, $k) => str_starts_with((string) $k, 'vnp_') && $v !== '' && $v !== null, ARRAY_FILTER_USE_BOTH);
-        ksort($params);
-        $q = [];
-        foreach ($params as $k => $v) {
-            $q[] = urlencode((string) $k) . '=' . urlencode((string) $v);
-        }
-        return hash_hmac('sha512', implode('&', $q), $secret);
+        return strtoupper($this->prefix) . str_pad((string) ($orderId % 1_000_000), 6, '0', STR_PAD_LEFT) . str_pad((string) random_int(0, 9999), 4, '0', STR_PAD_LEFT);
     }
 
-    public function createCheckout(string $gatewayOrderId, int $amountVnd, string $description, string $returnUrl, string $cancelUrl): array
+    public function qrUrl(int $amountVnd, string $code): string
     {
-        $now = $this->clock ? ($this->clock)() : new \DateTimeImmutable('now', new \DateTimeZone('Asia/Ho_Chi_Minh'));
-        $p = [
-            'vnp_Version' => '2.1.0', 'vnp_Command' => 'pay', 'vnp_TmnCode' => $this->tmnCode,
-            'vnp_Amount' => (string) ($amountVnd * 100), 'vnp_CurrCode' => 'VND', 'vnp_TxnRef' => $gatewayOrderId,
-            'vnp_OrderInfo' => $description, 'vnp_OrderType' => 'other', 'vnp_Locale' => 'vn',
-            'vnp_ReturnUrl' => $returnUrl, 'vnp_IpAddr' => '127.0.0.1',
-            'vnp_CreateDate' => $now->format('YmdHis'), 'vnp_ExpireDate' => $now->modify('+15 minutes')->format('YmdHis'),
-        ];
-        ksort($p);
-        $url = $this->payUrl . '?' . http_build_query($p, '', '&', PHP_QUERY_RFC1738) . '&vnp_SecureHash=' . self::sign($p, $this->hashSecret);
-        return ['checkout_url' => $url, 'gateway_payload' => $p];
-    }
-
-    public function parseNotification(array $input): Notification
-    {
-        $sig = (string) ($input['vnp_SecureHash'] ?? '');
-        $valid = $sig !== '' && hash_equals(self::sign($input, $this->hashSecret), strtolower($sig));
-        $success = ($input['vnp_ResponseCode'] ?? '') === '00' && ($input['vnp_TransactionStatus'] ?? '') === '00';
-        return new Notification(
-            $valid && ($input['vnp_TmnCode'] ?? '') === $this->tmnCode, $success,
-            (string) ($input['vnp_TxnRef'] ?? ''),
-            intdiv((int) ($input['vnp_Amount'] ?? 0), 100),
-            (string) ($input['vnp_TransactionNo'] ?? ''),
-            'vnpay:' . ($input['vnp_TxnRef'] ?? '') . ':' . ($input['vnp_TransactionNo'] ?? ''),
-        );
-    }
-}
-
-// ============================================================================ MoMo
-
-final class MomoGateway implements PaymentGateway
-{
-    public function __construct(
-        private readonly string $partnerCode,
-        private readonly string $accessKey,
-        private readonly string $secretKey,
-        private readonly HttpClient $http,
-        private readonly string $endpoint = 'https://test-payment.momo.vn/v2/gateway/api/create',
-        private readonly string $ipnUrl = '',
-    ) {
-    }
-
-    public function name(): string
-    {
-        return 'momo';
-    }
-
-    public static function ipnSignature(array $d, string $accessKey, string $secret): string
-    {
-        $raw = "accessKey=$accessKey&amount={$d['amount']}&extraData={$d['extraData']}&message={$d['message']}&orderId={$d['orderId']}"
-            . "&orderInfo={$d['orderInfo']}&orderType={$d['orderType']}&partnerCode={$d['partnerCode']}&payType={$d['payType']}"
-            . "&requestId={$d['requestId']}&responseTime={$d['responseTime']}&resultCode={$d['resultCode']}&transId={$d['transId']}";
-        return hash_hmac('sha256', $raw, $secret);
-    }
-
-    public function createCheckout(string $gatewayOrderId, int $amountVnd, string $description, string $returnUrl, string $cancelUrl): array
-    {
-        $requestId = $gatewayOrderId . '-' . bin2hex(random_bytes(4));
-        $type = 'captureWallet';
-        $raw = "accessKey={$this->accessKey}&amount=$amountVnd&extraData=&ipnUrl={$this->ipnUrl}&orderId=$gatewayOrderId&orderInfo=$description"
-            . "&partnerCode={$this->partnerCode}&redirectUrl=$returnUrl&requestId=$requestId&requestType=$type";
-        $res = $this->http->postJson($this->endpoint, [
-            'partnerCode' => $this->partnerCode, 'requestId' => $requestId, 'amount' => $amountVnd, 'orderId' => $gatewayOrderId,
-            'orderInfo' => $description, 'redirectUrl' => $returnUrl, 'ipnUrl' => $this->ipnUrl, 'requestType' => $type,
-            'extraData' => '', 'lang' => 'vi', 'signature' => hash_hmac('sha256', $raw, $this->secretKey),
+        return 'https://qr.sepay.vn/img?' . http_build_query([
+            'acc' => $this->accountNumber, 'bank' => $this->bank, 'amount' => $amountVnd, 'des' => $code, 'template' => 'compact',
         ]);
-        if (($res['resultCode'] ?? -1) !== 0 || !isset($res['payUrl'])) {
-            throw new \HolyMelody\ApiException(502, 'GATEWAY_ERROR', 'MoMo từ chối tạo thanh toán: ' . ($res['message'] ?? 'không rõ'));
-        }
-        return ['checkout_url' => (string) $res['payUrl'], 'gateway_payload' => $res];
     }
 
-    public function parseNotification(array $input): Notification
+    /** @return array{bank:string, account_number:string, account_name:string} */
+    public function beneficiary(): array
     {
-        $need = ['amount', 'extraData', 'message', 'orderId', 'orderInfo', 'orderType', 'partnerCode', 'payType', 'requestId', 'responseTime', 'resultCode', 'transId'];
-        $complete = count(array_intersect_key(array_flip($need), $input)) === count($need);
-        $valid = $complete && isset($input['signature'])
-            && hash_equals(self::ipnSignature($input, $this->accessKey, $this->secretKey), (string) $input['signature'])
-            && $input['partnerCode'] === $this->partnerCode;
+        return ['bank' => $this->bank, 'account_number' => $this->accountNumber, 'account_name' => $this->accountName];
+    }
+
+    public function createCheckout(string $gatewayOrderId, int $amountVnd, string $description, string $returnUrl, string $cancelUrl): array
+    {
+        // trang thanh toán của chính website: hiện QR + thông tin chuyển khoản, tự cập nhật khi tiền vào
+        return [
+            'checkout_url' => rtrim($this->publicUrl, '/') . '/pay/' . rawurlencode($gatewayOrderId),
+            'gateway_payload' => ['qr' => $this->qrUrl($amountVnd, $gatewayOrderId)],
+        ];
+    }
+
+    /** @param array<string,string> $headers tên header viết thường */
+    public function verify(string $rawBody, array $headers): bool
+    {
+        if ($this->hmacSecret !== '') {
+            $sig = (string) ($headers['x-sepay-signature'] ?? '');
+            $ts = (int) ($headers['x-sepay-timestamp'] ?? 0);
+            $now = $this->clock ? ($this->clock)() : time();
+            if ($sig === '' || $ts === 0 || abs($now - $ts) > 300) {
+                return false;
+            }
+            $expected = 'sha256=' . hash_hmac('sha256', $ts . '.' . $rawBody, $this->hmacSecret);
+            return hash_equals($expected, $sig);
+        }
+        if ($this->apiKey !== '') {
+            $auth = trim((string) ($headers['authorization'] ?? ''));
+            return hash_equals('Apikey ' . $this->apiKey, $auth) || hash_equals('Bearer ' . $this->apiKey, $auth);
+        }
+        return false; // chưa cấu hình xác thực → không bao giờ cộng credit
+    }
+
+    /** Mã thanh toán trong giao dịch: trường code (SePay tự nhận diện) hoặc tìm trong nội dung chuyển khoản */
+    public function extractCode(array $input): string
+    {
+        $code = strtoupper(trim((string) ($input['code'] ?? '')));
+        $re = '/' . preg_quote(strtoupper($this->prefix), '/') . '\d{10}/';
+        if ($code !== '' && preg_match($re, $code)) {
+            return $code;
+        }
+        // ngân hàng có thể viết hoa / bỏ dấu cách / thêm tiền tố vào nội dung
+        $content = strtoupper(preg_replace('/\s+/', '', (string) ($input['content'] ?? '') . ' ' . (string) ($input['description'] ?? '')) ?? '');
+        return preg_match($re, $content, $m) ? $m[0] : '';
+    }
+
+    public function parseNotification(array $input, string $rawBody = '', array $headers = []): Notification
+    {
+        $valid = $this->verify($rawBody, $headers);
+        $account = preg_replace('/\D/', '', (string) ($input['accountNumber'] ?? '')) ?? '';
+        $sub = preg_replace('/\W/', '', (string) ($input['subAccount'] ?? '')) ?? '';
+        $mine = preg_replace('/\D/', '', $this->accountNumber) ?? '';
+        $toMe = $mine !== '' && ($account === $mine || $sub === $mine || ($sub !== '' && $sub === preg_replace('/\W/', '', $this->accountNumber)));
+        $in = ($input['transferType'] ?? '') === 'in';
+        $id = (string) ($input['id'] ?? '');
         return new Notification(
-            $valid, (int) ($input['resultCode'] ?? -1) === 0,
-            (string) ($input['orderId'] ?? ''), (int) ($input['amount'] ?? 0), (string) ($input['transId'] ?? ''),
-            'momo:' . ($input['orderId'] ?? '') . ':' . ($input['transId'] ?? ''),
+            signatureValid: $valid,
+            success: $in && $toMe,
+            gatewayOrderId: $this->extractCode($input),
+            amountVnd: (int) round((float) ($input['transferAmount'] ?? 0)),
+            transactionId: $id !== '' ? 'sepay-' . $id : '',
+            eventId: $id !== '' ? 'sepay:' . $id : 'sepay:' . hash('sha256', $rawBody),
         );
     }
 }

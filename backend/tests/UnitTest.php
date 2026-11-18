@@ -8,10 +8,8 @@ use HolyMelody\Auth\GoogleIdTokenVerifier;
 use HolyMelody\Http\Request;
 use HolyMelody\Http\Router;
 use HolyMelody\Payments\HttpClient;
-use HolyMelody\Payments\MomoGateway;
 use HolyMelody\Payments\PaymentService;
-use HolyMelody\Payments\PayOsGateway;
-use HolyMelody\Payments\VnpayGateway;
+use HolyMelody\Payments\SePayGateway;
 
 // ------------------------------------------------------------------ Google ID token
 
@@ -62,74 +60,70 @@ final class FakeHttp implements HttpClient
     }
 }
 
-T::test('PayOS: chữ ký webhook hợp lệ / bị sửa số tiền', function () {
-    $gw = new PayOsGateway('cid', 'key', 'checksum-secret', new FakeHttp([]));
-    $data = ['orderCode' => 123456, 'amount' => 100000, 'description' => 'HM1', 'accountNumber' => '12345678', 'reference' => 'FT123',
-        'transactionDateTime' => '2026-11-17 10:00:00', 'currency' => 'VND', 'paymentLinkId' => 'pl_1', 'code' => '00', 'desc' => 'success',
-        'counterAccountBankId' => null, 'counterAccountName' => null, 'virtualAccountName' => null];
-    $body = ['code' => '00', 'desc' => 'success', 'success' => true, 'data' => $data, 'signature' => PayOsGateway::signData($data, 'checksum-secret')];
-    $n = $gw->parseNotification($body);
+function sepayGw(string $secret = 'whsec', string $key = '', ?int $now = null): SePayGateway
+{
+    return new SePayGateway('MBBank', '0123456789', 'NGUYEN VAN A', 'https://hm.example', $secret, $key, 'HM', $now === null ? null : fn () => $now);
+}
+
+function sepayBody(string $code = 'HM0000421234', int $amount = 99000, string $type = 'in', string $acc = '0123456789'): string
+{
+    return json_encode(['id' => 92704, 'gateway' => 'MBBank', 'transactionDate' => '2026-11-18 10:30:00', 'accountNumber' => $acc, 'subAccount' => null,
+        'code' => $code, 'content' => "$code thanh toan", 'transferType' => $type, 'transferAmount' => $amount, 'accumulated' => 1500000,
+        'referenceCode' => 'FT26322XXXX', 'description' => "BankAPINotify $code"], JSON_UNESCAPED_UNICODE);
+}
+
+T::test('SePay: HMAC-SHA256 đúng định dạng sha256=hex(timestamp.body); chống phát lại 5 phút; sửa thân bị phát hiện', function () {
+    $now = 1_800_000_000;
+    $gw = sepayGw('whsec', '', $now);
+    $body = sepayBody();
+    $sig = 'sha256=' . hash_hmac('sha256', $now . '.' . $body, 'whsec');
+    $n = $gw->parseNotification(json_decode($body, true), $body, ['x-sepay-signature' => $sig, 'x-sepay-timestamp' => (string) $now]);
     ok($n->signatureValid && $n->success);
-    eq($n->gatewayOrderId, '123456');
-    eq($n->amountVnd, 100000);
-    $body['data']['amount'] = 1000000;
-    ok(!$gw->parseNotification($body)->signatureValid, 'sửa số tiền phải làm chữ ký sai');
-    ok(!$gw->parseNotification(['data' => $data])->signatureValid, 'thiếu chữ ký');
+    eq($n->gatewayOrderId, 'HM0000421234');
+    eq($n->amountVnd, 99000);
+    eq($n->eventId, 'sepay:92704');
+    $tampered = str_replace('99000', '990000', $body);
+    ok(!$gw->parseNotification(json_decode($tampered, true), $tampered, ['x-sepay-signature' => $sig, 'x-sepay-timestamp' => (string) $now])->signatureValid, 'sửa số tiền');
+    $old = $now - 301;
+    $sigOld = 'sha256=' . hash_hmac('sha256', $old . '.' . $body, 'whsec');
+    ok(!$gw->parseNotification(json_decode($body, true), $body, ['x-sepay-signature' => $sigOld, 'x-sepay-timestamp' => (string) $old])->signatureValid, 'quá 5 phút');
+    ok(!$gw->parseNotification(json_decode($body, true), $body, [])->signatureValid, 'thiếu chữ ký');
 });
 
-T::test('PayOS: tạo thanh toán gửi chữ ký đúng thứ tự trường', function () {
-    $http = new FakeHttp(['code' => '00', 'data' => ['checkoutUrl' => 'https://pay.payos.vn/web/abc']]);
-    $gw = new PayOsGateway('cid', 'key', 'secret', $http);
-    $r = $gw->createCheckout('42', 300000, 'HM42', 'https://x/return', 'https://x/cancel');
-    eq($r['checkout_url'], 'https://pay.payos.vn/web/abc');
-    eq($http->last['body']['signature'], hash_hmac('sha256', 'amount=300000&cancelUrl=https://x/cancel&description=HM42&orderCode=42&returnUrl=https://x/return', 'secret'));
-    eq($http->last['headers']['x-client-id'], 'cid');
+T::test('SePay: API key; chưa cấu hình xác thực thì không bao giờ hợp lệ', function () {
+    $gw = sepayGw('', 'my-key');
+    $body = sepayBody();
+    ok($gw->parseNotification(json_decode($body, true), $body, ['authorization' => 'Apikey my-key'])->signatureValid);
+    ok(!$gw->parseNotification(json_decode($body, true), $body, ['authorization' => 'Apikey other'])->signatureValid);
+    ok(!sepayGw('', '')->parseNotification(json_decode($body, true), $body, ['authorization' => 'Apikey my-key'])->signatureValid);
 });
 
-T::test('VNPay: URL thanh toán và IPN dùng cùng thuật toán ký; phát hiện giả mạo', function () {
-    $clock = fn () => new \DateTimeImmutable('2026-11-17 10:00:00', new \DateTimeZone('Asia/Ho_Chi_Minh'));
-    $gw = new VnpayGateway('TMN01', 'vnp-secret', 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html', \Closure::fromCallable($clock));
-    $url = $gw->createCheckout('99', 500000, 'Nap credit', 'https://x/return', 'https://x/cancel')['checkout_url'];
-    parse_str((string) parse_url($url, PHP_URL_QUERY), $q);
-    eq($q['vnp_Amount'], '50000000');
-    eq($q['vnp_SecureHash'], VnpayGateway::sign($q, 'vnp-secret'));
-    $ipn = ['vnp_TmnCode' => 'TMN01', 'vnp_Amount' => '50000000', 'vnp_TxnRef' => '99', 'vnp_ResponseCode' => '00', 'vnp_TransactionStatus' => '00',
-        'vnp_TransactionNo' => '14000001', 'vnp_BankCode' => 'NCB', 'vnp_OrderInfo' => 'Nap credit', 'vnp_PayDate' => '20261117101500'];
-    $ipn['vnp_SecureHash'] = VnpayGateway::sign($ipn, 'vnp-secret');
-    $n = $gw->parseNotification($ipn);
-    ok($n->signatureValid && $n->success);
-    eq($n->amountVnd, 500000);
-    $ipn['vnp_Amount'] = '100';
-    ok(!$gw->parseNotification($ipn)->signatureValid);
-    $ipn2 = $ipn;
-    $ipn2['vnp_TmnCode'] = 'OTHER';
-    $ipn2['vnp_Amount'] = '50000000';
-    $ipn2['vnp_SecureHash'] = VnpayGateway::sign($ipn2, 'vnp-secret');
-    ok(!$gw->parseNotification($ipn2)->signatureValid, 'sai merchant');
+T::test('SePay: chỉ nhận tiền VÀO đúng tài khoản; lấy mã từ nội dung khi trường code trống', function () {
+    $gw = sepayGw('', 'k');
+    $h = ['authorization' => 'Apikey k'];
+    ok(!$gw->parseNotification(json_decode(sepayBody(type: 'out'), true), '', $h)->success, 'tiền ra');
+    ok(!$gw->parseNotification(json_decode(sepayBody(acc: '999'), true), '', $h)->success, 'tài khoản khác');
+    $d = json_decode(sepayBody(), true);
+    $d['code'] = null;
+    $d['content'] = 'MBVCB.123.hm 000042 1234.CT tu NGUYEN';
+    eq($gw->parseNotification($d, '', $h)->gatewayOrderId, 'HM0000421234');
+    $d['content'] = 'chuyen tien an trua';
+    $d['description'] = 'BankAPINotify chuyen tien';
+    eq($gw->parseNotification($d, '', $h)->gatewayOrderId, '');
 });
 
-T::test('MoMo: IPN hợp lệ / thiếu trường / sai partner', function () {
-    $gw = new MomoGateway('MOMO01', 'acc', 'momo-secret', new FakeHttp([]));
-    $ipn = ['partnerCode' => 'MOMO01', 'orderId' => '77', 'requestId' => '77-ab', 'amount' => 300000, 'orderInfo' => 'HM77', 'orderType' => 'momo_wallet',
-        'transId' => 4088878653, 'resultCode' => 0, 'message' => 'Thành công.', 'payType' => 'qr', 'responseTime' => 1721720663942, 'extraData' => ''];
-    $ipn['signature'] = MomoGateway::ipnSignature($ipn, 'acc', 'momo-secret');
-    $n = $gw->parseNotification($ipn);
-    ok($n->signatureValid && $n->success);
-    eq($n->amountVnd, 300000);
-    $bad = $ipn;
-    unset($bad['payType']);
-    ok(!$gw->parseNotification($bad)->signatureValid);
-    $bad = $ipn;
-    $bad['resultCode'] = 1006;
-    ok(!$gw->parseNotification($bad)->signatureValid, 'đổi resultCode làm chữ ký sai');
+T::test('SePay: mã thanh toán khó đoán, trang QR đúng tham số', function () {
+    $gw = sepayGw();
+    $c = $gw->orderCode(42);
+    ok((bool) preg_match('/^HM000042\d{4}$/', $c), $c);
+    $q = [];
+    parse_str((string) parse_url($gw->qrUrl(99000, $c), PHP_URL_QUERY), $q);
+    eq($q['acc'], '0123456789');
+    eq($q['bank'], 'MBBank');
+    eq($q['amount'], '99000');
+    eq($q['des'], $c);
+    eq($gw->createCheckout($c, 99000, $c, '', '')['checkout_url'], "https://hm.example/pay/$c");
 });
-
-T::test('mã đơn gửi cổng là số nguyên dương an toàn (≤ 2^53)', function () {
-    $id = PaymentService::gatewayOrderId(987654321);
-    ok(ctype_digit($id) && (int) $id > 0 && (int) $id < 2 ** 53);
-});
-
-// ------------------------------------------------------------------ HTTP
 
 T::test('router: tham số đường dẫn, 404, 405, lỗi API → JSON', function () {
     $r = new Router();

@@ -38,8 +38,18 @@ function install_check(string $root, Config $config, ?Db $db, ?\Throwable $dbErr
     $storage = (string) $config->get('HM_STORAGE_DIR', '');
     $add('Thư mục lưu trữ HM_STORAGE_DIR ghi được', $storage !== '' && is_dir($storage) && is_writable($storage), 'Tạo thư mục (vd /home/USER/holymelody/storage), quyền 755, điền đường dẫn tuyệt đối');
     $add('Đăng nhập Google: HM_GOOGLE_CLIENT_IDS', (string) $config->get('HM_GOOGLE_CLIENT_IDS', '') !== '', 'Tạo OAuth Client (Web + Desktop) ở Google Cloud Console rồi điền');
-    $pay = (string) $config->get('HM_PAYOS_CLIENT_ID', '') !== '' || (string) $config->get('HM_VNPAY_TMN_CODE', '') !== '' || (string) $config->get('HM_MOMO_PARTNER_CODE', '') !== '';
-    $add('Thanh toán: ít nhất một cổng (PayOS / VNPay / MoMo)', $pay, 'Điền khoá cổng thanh toán (bản sandbox để thử trước)', true);
+    $acc = (string) $config->get('HM_SEPAY_ACCOUNT_NUMBER', '') !== '' && (string) $config->get('HM_SEPAY_BANK', '') !== '';
+    $add('Thanh toán SePay: ngân hàng + số tài khoản (HM_SEPAY_BANK, HM_SEPAY_ACCOUNT_NUMBER)', $acc, 'Điền mã ngân hàng (vd MBBank, Vietcombank — xem qr.sepay.vn/banks.json) và số tài khoản đã liên kết trên my.sepay.vn', true);
+    $auth = (string) $config->get('HM_SEPAY_WEBHOOK_SECRET', '') !== '' || (string) $config->get('HM_SEPAY_API_KEY', '') !== '';
+    $add('Thanh toán SePay: xác thực webhook (HM_SEPAY_WEBHOOK_SECRET hoặc HM_SEPAY_API_KEY)', !$acc || $auth, 'Bắt buộc khi đã bật SePay: thiếu thì webhook bị từ chối, không cộng credit');
+    if ($db) {
+        $gw = '';
+        try {
+            $gw = (string) ($db->one("SHOW COLUMNS FROM payment_orders LIKE 'gateway'")['Type'] ?? '');
+        } catch (\Throwable) {
+        }
+        $add('Đã chạy 004_sepay.sql (cổng sepay)', str_contains($gw, 'sepay'), 'Import install.sql (hoặc 004_sepay.sql)');
+    }
     $add('AI đọc ảnh vùng khó: HM_ANTHROPIC_API_KEY', (string) $config->get('HM_ANTHROPIC_API_KEY', '') !== '', 'Không bắt buộc. Có key thì bước Chuyển sang Editor dùng thêm AI', true);
     $add('HM_WORKER_TOKEN đủ mạnh (≥ 32 ký tự)', strlen((string) $config->get('HM_WORKER_TOKEN', '')) >= 32, 'Chỉ cần khi chạy AI worker (AI Singer)', true);
 

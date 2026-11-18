@@ -90,3 +90,18 @@ input, select, textarea { font: inherit; padding: 9px 12px; border: 1px solid va
 .reveal.in { opacity: 1; transform: none; }
 @media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; } * { animation: none !important; transition: none !important; } }
 @media (max-width: 860px) { .hero, .features, .shots, .steps, .charts, .grid { grid-template-columns: 1fr; } .hero { min-height: auto; } }
+
+/* ---- trang thanh toán SePay */
+.pay-grid { display: grid; grid-template-columns: minmax(240px, 320px) 1fr; gap: 32px; align-items: start; margin-top: 16px; }
+@media (max-width: 720px) { .pay-grid { grid-template-columns: 1fr; } }
+.pay-qr { margin: 0; text-align: center; }
+.pay-qr img { width: 100%; height: auto; border-radius: 12px; border: 1px solid #e5e2dc; background: #fff; }
+.pay-qr figcaption { font-size: 13px; color: #6b665e; margin-top: 8px; }
+.pay-info dl { display: grid; grid-template-columns: max-content 1fr; gap: 10px 16px; margin: 0 0 16px; }
+.pay-info dt { color: #6b665e; }
+.pay-info dd { margin: 0; }
+.pay-info .mono { font-family: ui-monospace, Menlo, monospace; letter-spacing: .04em; }
+.copy { margin-left: 8px; font-size: 12px; padding: 2px 8px; border-radius: 6px; border: 1px solid #d9d4cb; background: #fff; cursor: pointer; }
+.note.warn { background: #fff6e8; border-color: #f0d9b0; }
+.pay-state { font-weight: 600; }
+.pay-done { text-align: center; padding: 32px 0; }

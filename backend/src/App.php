@@ -9,11 +9,8 @@ use HolyMelody\Auth\GoogleIdTokenVerifier;
 use HolyMelody\Http\Request;
 use HolyMelody\Http\Response;
 use HolyMelody\Http\Router;
-use HolyMelody\Payments\CurlHttpClient;
-use HolyMelody\Payments\MomoGateway;
 use HolyMelody\Payments\PaymentService;
-use HolyMelody\Payments\PayOsGateway;
-use HolyMelody\Payments\VnpayGateway;
+use HolyMelody\Payments\SePayGateway;
 use HolyMelody\Support\RateLimiter;
 use HolyMelody\Wallet\WalletService;
 
@@ -72,17 +69,13 @@ final class App
     private function payments(): PaymentService
     {
         $c = $this->config;
-        $http = new CurlHttpClient();
         $gws = [];
-        if ($c->get('HM_PAYOS_CLIENT_ID')) {
-            $gws['payos'] = new PayOsGateway($c->require('HM_PAYOS_CLIENT_ID'), $c->require('HM_PAYOS_API_KEY'), $c->require('HM_PAYOS_CHECKSUM_KEY'), $http);
-        }
-        if ($c->get('HM_VNPAY_TMN_CODE')) {
-            $gws['vnpay'] = new VnpayGateway($c->require('HM_VNPAY_TMN_CODE'), $c->require('HM_VNPAY_HASH_SECRET'), $c->get('HM_VNPAY_PAY_URL') ?? 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html');
-        }
-        if ($c->get('HM_MOMO_PARTNER_CODE')) {
-            $gws['momo'] = new MomoGateway($c->require('HM_MOMO_PARTNER_CODE'), $c->require('HM_MOMO_ACCESS_KEY'), $c->require('HM_MOMO_SECRET_KEY'), $http,
-                $c->get('HM_MOMO_ENDPOINT') ?? 'https://test-payment.momo.vn/v2/gateway/api/create', $c->require('HM_PUBLIC_URL') . '/api/v1/webhooks/momo');
+        if ($c->get('HM_SEPAY_ACCOUNT_NUMBER')) {
+            $gws['sepay'] = new SePayGateway(
+                $c->require('HM_SEPAY_BANK'), $c->require('HM_SEPAY_ACCOUNT_NUMBER'), (string) ($c->get('HM_SEPAY_ACCOUNT_NAME') ?? ''),
+                $c->require('HM_PUBLIC_URL'), (string) ($c->get('HM_SEPAY_WEBHOOK_SECRET') ?? ''), (string) ($c->get('HM_SEPAY_API_KEY') ?? ''),
+                (string) ($c->get('HM_SEPAY_CODE_PREFIX') ?? 'HM'),
+            );
         }
         $base = $c->get('HM_PUBLIC_URL') ?? '';
         return new PaymentService($this->db, $this->wallet(), $gws, "$base/account/payment-return", "$base/account/payment-cancel");
@@ -216,7 +209,7 @@ final class App
             if (!preg_match('/^[A-Za-z0-9_\-]{8,100}$/', $key)) {
                 throw new ApiException(400, 'INVALID_IDEMPOTENCY_KEY', 'Thiếu header Idempotency-Key');
             }
-            return Response::json($this->payments()->createOrder($req->auth['user_id'], (int) ($b['package_id'] ?? 0), (string) ($b['gateway'] ?? 'payos'), $key), 201);
+            return Response::json($this->payments()->createOrder($req->auth['user_id'], (int) ($b['package_id'] ?? 0), 'sepay', $key), 201);
         }, [$user]);
         $r->add('GET', '/api/v1/payments/orders/{id}', function (Request $req) {
             return $this->payments()->orderStatus($req->auth['user_id'], (int) $req->params['id'])
@@ -224,27 +217,20 @@ final class App
         }, [$user]);
 
         // ---- webhook / IPN (không cần đăng nhập; xác thực bằng chữ ký)
-        $r->add('POST', '/api/v1/webhooks/payos', function (Request $req) {
-            $res = $this->payments()->handleNotification('payos', $req->json());
-            return ['success' => in_array($res['status'], ['valid', 'duplicate', 'not_success'], true)];
-        }, [$this->ipLimit('webhook', 300)]);
-        $r->add('POST', '/api/v1/webhooks/momo', function (Request $req) {
-            $this->payments()->handleNotification('momo', $req->json());
-            return new Response(204, '');
-        }, [$this->ipLimit('webhook', 300)]);
-        $r->add('GET', '/api/v1/webhooks/vnpay', function (Request $req) {
-            $res = $this->payments()->handleNotification('vnpay', $req->query);
-            // Mã phản hồi IPN theo đặc tả VNPay
-            $code = match ($res['status']) {
-                'valid', 'not_success' => ['00', 'Confirm Success'],
-                'duplicate' => ['02', 'Order already confirmed'],
-                'unknown_order' => ['01', 'Order not found'],
-                'amount_mismatch' => ['04', 'Invalid amount'],
-                'invalid_signature' => ['97', 'Invalid signature'],
-                default => ['99', 'Unknown error'],
-            };
-            return ['RspCode' => $code[0], 'Message' => $code[1]];
-        }, [$this->ipLimit('webhook', 300)]);
+        // SePay: xác thực HMAC-SHA256 (hoặc API key) trên thân request thô. Luôn trả {"success":true} cho giao dịch
+        // đã xử lý (kể cả không phải đơn của mình) để SePay không gửi lại; sai chữ ký → 401.
+        $r->add('POST', '/api/v1/webhooks/sepay', function (Request $req) {
+            $res = $this->payments()->handleNotification('sepay', $req->json(), $req->body, $req->headers);
+            if ($res['status'] === 'invalid_signature') {
+                return Response::json(['success' => false, 'message' => 'Invalid signature'], 401);
+            }
+            return ['success' => true];
+        }, [$this->ipLimit('webhook', 600)]);
+        // trang thanh toán (QR) — công khai theo mã thanh toán, có giới hạn tần suất
+        $r->add('GET', '/api/v1/pay/{code}', function (Request $req) {
+            return $this->payments()->payPage((string) $req->params['code'])
+                ?? throw new ApiException(404, 'NOT_FOUND', 'Không tìm thấy đơn thanh toán');
+        }, [$this->ipLimit('pay', 120)]);
 
         // ---- AI: tải bản nhạc đầu vào (MusicXML ≤ 2 MB), lưu theo SHA-256
         $r->add('POST', '/api/v1/ai/inputs', function (Request $req) {

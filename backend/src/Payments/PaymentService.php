@@ -47,7 +47,7 @@ final class PaymentService
         if (!$pkg) {
             throw new ApiException(404, 'PACKAGE_NOT_FOUND', 'Gói không tồn tại');
         }
-        // orderCode PayOS phải là số; dùng id tự tăng + thời gian để không trùng giữa môi trường
+        // mã thanh toán do cổng sinh (SePay: tiền tố + id + số ngẫu nhiên), ghi sau khi có id tự tăng
         $orderId = $this->db->tx(function (Db $db) use ($userId, $pkg, $gw, $idempotencyKey) {
             $db->exec(
                 'INSERT INTO payment_orders (user_id, package_id, amount_vnd, credits, status, gateway, gateway_order_id, idempotency_key, expires_at)
@@ -55,30 +55,42 @@ final class PaymentService
                 [$userId, (int) $pkg['id'], (int) $pkg['price_vnd'], (int) $pkg['credits'], $gw->name(), $idempotencyKey, self::ORDER_TTL_MINUTES],
             );
             $id = $db->lastId();
-            $db->exec('UPDATE payment_orders SET gateway_order_id = ? WHERE id = ?', [self::gatewayOrderId($id), $id]);
+            $db->exec('UPDATE payment_orders SET gateway_order_id = ? WHERE id = ?', [$gw->orderCode($id), $id]);
             return $id;
         });
         $order = $this->db->one('SELECT * FROM payment_orders WHERE id = ?', [$orderId]);
-        $co = $gw->createCheckout((string) $order['gateway_order_id'], (int) $order['amount_vnd'], "HM{$orderId}", $this->returnUrl, $this->cancelUrl);
+        $co = $gw->createCheckout((string) $order['gateway_order_id'], (int) $order['amount_vnd'], (string) $order['gateway_order_id'], $this->returnUrl, $this->cancelUrl);
         $this->db->exec('UPDATE payment_orders SET checkout_url = ? WHERE id = ?', [$co['checkout_url'], $orderId]);
         $order['checkout_url'] = $co['checkout_url'];
         return self::publicOrder($order);
     }
 
-    public static function gatewayOrderId(int $id): string
+    /**
+     * Thông tin trang thanh toán (công khai theo mã thanh toán khó đoán): QR, người nhận, số tiền, trạng thái.
+     * Không có thông tin người mua.
+     * @return array<string,mixed>|null
+     */
+    public function payPage(string $code): ?array
     {
-        // số dương ≤ 2^53 cho PayOS; tiền tố thời gian tránh trùng khi reset DB
-        return (string) (((int) (time() / 60) % 10_000_000) * 1_000_000 + ($id % 1_000_000));
+        $o = $this->db->one('SELECT * FROM payment_orders WHERE gateway_order_id = ?', [strtoupper($code)]);
+        $gw = $o ? ($this->gateways[$o['gateway']] ?? null) : null;
+        if (!$o || !$gw instanceof SePayGateway) {
+            return null;
+        }
+        return [
+            'code' => $o['gateway_order_id'], 'status' => $o['status'], 'amount_vnd' => (int) $o['amount_vnd'], 'credits' => (int) $o['credits'],
+            'qr_url' => $gw->qrUrl((int) $o['amount_vnd'], (string) $o['gateway_order_id']), 'expires_at' => $o['expires_at'], 'paid_at' => $o['paid_at'],
+        ] + $gw->beneficiary();
     }
 
     /**
      * Xử lý webhook/IPN. Idempotent: gửi lặp nhiều lần chỉ cộng credit một lần.
      * @return array{status:string, order_id:?int}
      */
-    public function handleNotification(string $gatewayName, array $input): array
+    public function handleNotification(string $gatewayName, array $input, string $rawBody = '', array $headers = []): array
     {
         $gw = $this->gateways[$gatewayName] ?? throw new ApiException(404, 'GATEWAY_UNAVAILABLE', 'Cổng không tồn tại');
-        $n = $gw->parseNotification($input);
+        $n = $gw->parseNotification($input, $rawBody, $headers);
         $payload = json_encode($input, JSON_UNESCAPED_UNICODE) ?: '{}';
 
         return $this->db->tx(function (Db $db) use ($gw, $n, $payload) {
@@ -89,7 +101,8 @@ final class PaymentService
                 !$n->signatureValid => 'invalid_signature',
                 !$order => 'unknown_order',
                 !$n->success => 'not_success',
-                $n->amountVnd !== (int) $order['amount_vnd'] => 'amount_mismatch',
+                // chuyển thiếu → không cộng (admin xử lý); chuyển dư → vẫn cộng gói, số tiền thật ghi trong audit log
+                $n->amountVnd < (int) $order['amount_vnd'] => 'amount_mismatch',
                 $order['status'] === 'paid' => 'duplicate',
                 default => 'valid',
             };

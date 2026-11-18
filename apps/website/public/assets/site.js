@@ -74,7 +74,7 @@
   // ---- mua credit (cần đăng nhập)
   async function buy(pkgId) {
     try {
-      const order = await api('POST', '/api/v1/payments/orders', { package_id: Number(pkgId), gateway: 'payos' }, crypto.randomUUID());
+      const order = await api('POST', '/api/v1/payments/orders', { package_id: Number(pkgId) }, crypto.randomUUID());
       try { sessionStorage.setItem('hm-last-order', String(order.id)); } catch {}
       if (order.checkout_url) location.href = order.checkout_url;
     } catch (e) {
@@ -83,6 +83,51 @@
     }
   }
   $$('.buy').forEach((b) => b.addEventListener('click', () => buy(b.dataset.package)));
+
+  // ---- trang thanh toán SePay: QR + thông tin chuyển khoản, kiểm tra trạng thái mỗi 3 giây
+  async function payPage() {
+    const root = $('#pay-app');
+    if (!root) return;
+    const code = root.dataset.code;
+    const show = (id, on) => { const el = $('#' + id); if (el) el.hidden = !on; };
+    let info;
+    try {
+      info = await api('GET', '/api/v1/pay/' + encodeURIComponent(code));
+    } catch {
+      show('pay-loading', false); show('pay-missing', true); return;
+    }
+    show('pay-loading', false);
+    const done = (i) => { show('pay-body', false); show('pay-done', true); $('#pay-done-credits').textContent = fmt(i.credits); };
+    if (info.status === 'paid') return done(info);
+    show('pay-body', true);
+    $('#pay-qr').src = info.qr_url;
+    $('#pay-bank').textContent = info.bank;
+    $('#pay-acc').textContent = info.account_number;
+    $('#pay-holder').textContent = info.account_name || '—';
+    $('#pay-amount').textContent = fmt(info.amount_vnd) + ' VNĐ';
+    $('#pay-amount-raw').textContent = String(info.amount_vnd);
+    $('#pay-code').textContent = info.code;
+    $('#pay-credits').textContent = fmt(info.credits);
+    $$('.copy').forEach((b) => b.addEventListener('click', async () => {
+      const t = $('#' + b.dataset.copy)?.textContent || '';
+      try { await navigator.clipboard.writeText(t); b.textContent = 'Đã chép'; setTimeout(() => (b.textContent = 'Chép'), 1500); } catch {}
+    }));
+    const exp = info.expires_at ? new Date(info.expires_at.replace(' ', 'T') + 'Z').getTime() : 0;
+    const tick = () => {
+      if (!exp) return;
+      const s = Math.max(0, Math.round((exp - Date.now()) / 1000));
+      $('#pay-timer').textContent = s ? `(còn ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')})` : '(đơn đã quá hạn — nếu đã chuyển khoản, credit vẫn được cộng khi tiền vào)';
+    };
+    tick();
+    const t1 = setInterval(tick, 1000);
+    const t2 = setInterval(async () => {
+      try {
+        const i = await api('GET', '/api/v1/pay/' + encodeURIComponent(code));
+        if (i.status === 'paid') { clearInterval(t1); clearInterval(t2); done(i); }
+      } catch {}
+    }, 3000);
+  }
+  payPage();
 
   // ---- trang tài khoản
   const TYPE = { signup_bonus: 'Quà tài khoản mới', purchase: 'Nạp credit', ai_charge: 'Dùng AI', ai_refund: 'Hoàn credit AI', admin_adjustment: 'Điều chỉnh', reversal: 'Đảo giao dịch' };

@@ -18,7 +18,7 @@ function render_page(string $path, Config $config, ?Db $db): void
     $base = rtrim($config->get('HM_PUBLIC_URL') ?? '', '/');
     header('X-Content-Type-Options: nosniff');
     header('Referrer-Policy: strict-origin-when-cross-origin');
-    header("Content-Security-Policy: default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client; frame-src https://accounts.google.com/gsi/; connect-src 'self' https://accounts.google.com/gsi/; style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style; img-src 'self' data: https://*.googleusercontent.com");
+    header("Content-Security-Policy: default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client; frame-src https://accounts.google.com/gsi/; connect-src 'self' https://accounts.google.com/gsi/; style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style; img-src 'self' data: https://*.googleusercontent.com https://qr.sepay.vn");
 
     switch ($path) {
         case '/robots.txt':
@@ -45,12 +45,17 @@ function render_page(string $path, Config $config, ?Db $db): void
         '/account/payment-cancel' => ['Đã hủy thanh toán – Holy Melody', 'page_payment_return'],
         '/admin' => ['Quản trị – Holy Melody', 'page_admin'],
     ];
+    // trang thanh toán SePay: /pay/HM0000421234
+    if (preg_match('#^/pay/([A-Za-z0-9]{4,40})$#', $path, $pm)) {
+        $pages[$path] = ['Thanh toán chuyển khoản – Holy Melody', 'page_pay'];
+        $ctxCode = strtoupper($pm[1]);
+    }
     if (!isset($pages[$path])) {
         http_response_code(404);
         $pages[$path] = ['Không tìm thấy trang – Holy Melody', 'page_404'];
     }
     [$title, $fn] = $pages[$path];
-    $ctx = ['config' => $config, 'db' => $db, 'base' => $base, 'path' => $path];
+    $ctx = ['config' => $config, 'db' => $db, 'base' => $base, 'path' => $path, 'pay_code' => $ctxCode ?? null];
     ob_start();
     $fn($ctx);
     $body = (string) ob_get_clean();
@@ -238,7 +243,7 @@ function page_pricing(array $ctx, bool $embedded = false): void
       </article>
     <?php endforeach; ?>
   </div>
-  <p class="small">Thanh toán qua VietQR (PayOS), VNPay hoặc MoMo. Credit chỉ được cộng sau khi cổng thanh toán xác nhận giao dịch với máy chủ. Mỗi tác vụ AI mặc định 10 credit; job lỗi do hệ thống được hoàn credit tự động.</p>
+  <p class="small">Thanh toán bằng chuyển khoản ngân hàng qua mã VietQR (xác nhận tự động bởi SePay): quét mã bằng app ngân hàng bất kỳ, credit được cộng ngay khi tiền vào tài khoản. Mỗi tác vụ AI mặc định 10 credit; job lỗi do hệ thống được hoàn credit tự động.</p>
   <?php endif; ?>
 </section>
 <?php
@@ -291,6 +296,41 @@ function page_payment_return(array $ctx): void
   <h1><?= $ctx['path'] === '/account/payment-cancel' ? 'Bạn đã hủy thanh toán' : 'Đang xác nhận thanh toán…' ?></h1>
   <p class="lead" id="pay-status">Credit chỉ được cộng khi cổng thanh toán xác nhận trực tiếp với máy chủ. Trang này tự cập nhật.</p>
   <p><a class="btn" href="/account">Về trang tài khoản</a></p>
+</section>
+<?php
+}
+
+function page_pay(array $ctx): void
+{
+    $code = e((string) $ctx['pay_code']);
+    ?>
+<section class="page pay" id="pay-app" data-code="<?= $code ?>">
+  <h1>Thanh toán chuyển khoản</h1>
+  <div id="pay-loading" class="lead">Đang tải thông tin thanh toán…</div>
+  <div id="pay-missing" class="note" hidden>Không tìm thấy đơn thanh toán này.</div>
+  <div id="pay-body" class="pay-grid" hidden>
+    <figure class="pay-qr">
+      <img id="pay-qr" alt="Mã VietQR chuyển khoản" width="300" height="300">
+      <figcaption>Mở app ngân hàng → <b>Quét mã QR</b>. Số tiền và nội dung đã điền sẵn.</figcaption>
+    </figure>
+    <div class="pay-info">
+      <dl>
+        <dt>Ngân hàng</dt><dd id="pay-bank"></dd>
+        <dt>Số tài khoản</dt><dd><span id="pay-acc"></span> <button class="copy" data-copy="pay-acc">Chép</button></dd>
+        <dt>Chủ tài khoản</dt><dd id="pay-holder"></dd>
+        <dt>Số tiền</dt><dd><b id="pay-amount"></b> <button class="copy" data-copy="pay-amount-raw">Chép</button><span id="pay-amount-raw" hidden></span></dd>
+        <dt>Nội dung</dt><dd><b id="pay-code" class="mono"></b> <button class="copy" data-copy="pay-code">Chép</button></dd>
+        <dt>Nhận được</dt><dd><b id="pay-credits"></b> credit</dd>
+      </dl>
+      <p class="note warn">Chuyển khoản thủ công: nhập <b>đúng nội dung</b> và <b>đúng số tiền</b> như trên để hệ thống tự xác nhận.</p>
+      <p id="pay-state" class="pay-state" aria-live="polite">⏳ Đang chờ chuyển khoản… <span id="pay-timer"></span></p>
+    </div>
+  </div>
+  <div id="pay-done" class="pay-done" hidden>
+    <h2>✅ Thanh toán thành công</h2>
+    <p class="lead">Đã cộng <b id="pay-done-credits"></b> credit vào tài khoản. Bạn có thể quay lại ứng dụng Holy Melody.</p>
+    <p><a class="btn" href="/account">Xem tài khoản</a></p>
+  </div>
 </section>
 <?php
 }

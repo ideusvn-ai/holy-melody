@@ -6,9 +6,8 @@ require_once __DIR__ . '/helpers.php';
 use HolyMelody\Ai\AiJobService;
 use HolyMelody\Auth\AuthService;
 use HolyMelody\Db;
-use HolyMelody\Payments\HttpClient;
 use HolyMelody\Payments\PaymentService;
-use HolyMelody\Payments\PayOsGateway;
+use HolyMelody\Payments\SePayGateway;
 use HolyMelody\Wallet\WalletService;
 
 /**
@@ -129,37 +128,43 @@ T::test('[DB] thiếu credit thì không tạo job', function () {
     $db->exec('UPDATE ai_pricing SET credit_cost = 10 WHERE job_type = \'lyrics\'');
 });
 
-T::test('[DB] webhook thanh toán lặp lại chỉ cộng credit một lần; sai số tiền/chữ ký không cộng', function () {
+T::test('[DB] SePay: webhook lặp lại chỉ cộng credit một lần; thiếu tiền / sai chữ ký / tiền ra không cộng', function () {
     $db = testDb();
     $w = new WalletService($db);
-    $http = new class implements HttpClient {
-        public function postJson(string $url, array $body, array $headers = []): array
-        {
-            return ['code' => '00', 'data' => ['checkoutUrl' => 'https://pay.example/' . $body['orderCode']]];
-        }
-    };
-    $pay = new PaymentService($db, $w, ['payos' => new PayOsGateway('c', 'k', 'sum', $http)], 'https://x/r', 'https://x/c');
+    $gw = new SePayGateway('MBBank', '0123456789', 'NGUYEN VAN A', 'https://hm.example', 'whsec');
+    $pay = new PaymentService($db, $w, ['sepay' => $gw], 'https://x/r', 'https://x/c');
     $uid = newUser($db, 'sub-E');
-    $order = $pay->createOrder($uid, 2, 'payos', 'order-key-1');
-    eq($pay->createOrder($uid, 2, 'payos', 'order-key-1')['id'], $order['id'], 'tạo đơn idempotent');
+    $order = $pay->createOrder($uid, 2, 'sepay', 'order-key-1');
+    eq($pay->createOrder($uid, 2, 'sepay', 'order-key-1')['id'], $order['id'], 'tạo đơn idempotent');
     $code = $db->one('SELECT gateway_order_id FROM payment_orders WHERE id = ?', [$order['id']])['gateway_order_id'];
-    $data = ['orderCode' => (int) $code, 'amount' => 300000, 'description' => 'HM', 'reference' => 'FT1', 'paymentLinkId' => 'pl', 'code' => '00', 'desc' => 'ok'];
-    $body = ['code' => '00', 'desc' => 'ok', 'data' => $data, 'signature' => PayOsGateway::signData($data, 'sum')];
+    ok(str_contains((string) $order['checkout_url'], "/pay/$code"));
+    $page = $pay->payPage(strtolower($code));
+    eq($page['status'], 'pending');
+    eq($page['account_number'], '0123456789');
+    $amount = (int) $page['amount_vnd'];
 
-    $bad = $body;
-    $bad['data']['amount'] = 3000;
-    $bad['signature'] = PayOsGateway::signData($bad['data'], 'sum');
-    eq($pay->handleNotification('payos', $bad)['status'], 'amount_mismatch');
-    $forged = $body;
-    $forged['signature'] = str_repeat('0', 64);
-    eq($pay->handleNotification('payos', $forged)['status'], 'invalid_signature');
+    $send = function (array $over = [], ?string $secret = 'whsec') use ($pay, $code, $amount) {
+        $d = ['id' => 5001, 'gateway' => 'MBBank', 'accountNumber' => '0123456789', 'code' => null, 'content' => "$code chuyen tien",
+            'transferType' => 'in', 'transferAmount' => $amount, 'referenceCode' => 'FT1'] + [];
+        $d = array_merge($d, $over);
+        $body = json_encode($d);
+        $ts = time();
+        $h = ['x-sepay-timestamp' => (string) $ts, 'x-sepay-signature' => 'sha256=' . hash_hmac('sha256', "$ts.$body", (string) $secret)];
+        return $pay->handleNotification('sepay', $d, $body, $h)['status'];
+    };
+    eq($send(['id' => 4001, 'transferAmount' => $amount - 1000]), 'amount_mismatch');
+    eq($send(['id' => 4002], 'sai-khoa'), 'invalid_signature');
+    eq($send(['id' => 4003, 'transferType' => 'out']), 'not_success');
     eq($w->balance($uid), 100);
+    $db->exec("UPDATE payment_orders SET status = 'pending' WHERE id = ?", [$order['id']]); // 'not_success' đã đánh dấu failed
 
-    eq($pay->handleNotification('payos', $body)['status'], 'valid');
-    eq($pay->handleNotification('payos', $body)['status'], 'duplicate');
-    eq($pay->handleNotification('payos', $body)['status'], 'duplicate');
-    eq($w->balance($uid), 400);
+    eq($send(), 'valid');
+    eq($send(), 'duplicate', 'SePay gửi lại cùng giao dịch');
+    eq($send(['id' => 5002]), 'duplicate', 'giao dịch khác cho đơn đã trả');
+    eq($w->balance($uid), 100 + (int) $order['credits']);
     eq($pay->orderStatus($uid, $order['id'])['status'], 'paid');
+    eq($pay->payPage($code)['status'], 'paid');
+    eq($send(['id' => 6001, 'content' => 'chuyen tien an trua']), 'unknown_order');
 });
 
 T::test('[DB] trừ credit song song (5 tiến trình) không làm số dư âm', function () {

@@ -12,7 +12,8 @@
 | GET | `/api/v1/pricing` | Gói credit + giá AI (`available` = máy chủ đã bật) |
 | POST | `/api/v1/payments/orders` | `{package_id, gateway}` + `Idempotency-Key` → `checkout_url` |
 | GET | `/api/v1/payments/orders/{id}` | Trạng thái đơn |
-| POST | `/api/v1/webhooks/payos` · GET `/webhooks/vnpay` · POST `/webhooks/momo` | IPN từ cổng (xác thực bằng chữ ký) |
+| POST | `/api/v1/webhooks/sepay` | Webhook SePay (HMAC-SHA256 `X-Sepay-Signature` hoặc `Authorization: Apikey`); cộng credit một lần khi tiền vào đúng tài khoản + mã + số tiền |
+| GET | `/api/v1/pay/{code}` | Thông tin trang thanh toán (QR, ngân hàng, số tiền, trạng thái) theo mã thanh toán |
 | POST | `/api/v1/ai/inputs` | `{format:"musicxml", content}` → `input_reference` |
 | GET | `/api/v1/omr/edit-price` | Giá chuyển ảnh/PDF sang Edit (mặc định 10 credit) |
 | POST | `/api/v1/omr/edit-conversions` | `{source_hash, title, pages, measures}` → trừ credit **một lần** cho mỗi (người dùng, file gốc); gọi lại trả kết quả cũ (`replayed: true`) |
