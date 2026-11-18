@@ -86,9 +86,12 @@ Chọn **một** trong hai cách, tuỳ hosting có cho đổi thư mục gốc 
    - Loại **Web application**: *Authorized JavaScript origins* = `https://ten-mien-cua-ban.vn`
    - Loại **Desktop app**: dùng cho app Holy Melody trên máy tính
 3. Điền **cả hai** Client ID vào `HM_GOOGLE_CLIENT_IDS` (cách nhau dấu phẩy).
-4. Để bản app desktop đăng nhập được, khai báo trong GitHub → repo `holy-melody` → **Settings → Secrets and variables → Actions**:
-   `HM_API_URL` = `https://ten-mien-cua-ban.vn`, `HM_GOOGLE_DESKTOP_CLIENT_ID`, `HM_GOOGLE_DESKTOP_CLIENT_SECRET`.
-   Lần build tiếp theo sẽ tự gắn các giá trị này vào app.
+4. Để bản app desktop đăng nhập được, vào GitHub → repo `holy-melody` → **Settings → Secrets and variables → Actions → New repository secret**, tạo 3 secret:
+   - `HM_API_URL` = `https://ten-mien-cua-ban.vn` (không có dấu `/` ở cuối)
+   - `HM_GOOGLE_DESKTOP_CLIENT_ID` = Client ID của client loại **Desktop app**
+   - `HM_GOOGLE_DESKTOP_CLIENT_SECRET` = Client secret của client loại **Desktop app**
+
+   Sau đó vào **Actions → desktop → Run workflow** để build lại; app mới sẽ có sẵn các giá trị này.
 
 ## Bước 6: Tài khoản quản trị
 1. Đăng nhập website bằng Google một lần.

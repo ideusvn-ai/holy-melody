@@ -98,6 +98,22 @@ jobs:
         shell: bash
         run: scripts/ci/step.sh audiveris node scripts/fetch-audiveris.mjs ${{ matrix.audiveris }}
         env: { GITHUB_TOKEN: '${{ github.token }}' }
+      - name: Cấu hình tài khoản (máy chủ + Google đăng nhập)
+        shell: bash
+        env:
+          HM_API_URL: ${{ secrets.HM_API_URL }}
+          HM_GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.HM_GOOGLE_DESKTOP_CLIENT_ID }}
+          HM_GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.HM_GOOGLE_DESKTOP_CLIENT_SECRET }}
+        run: |
+          # Rust đọc các biến này lúc biên dịch (option_env!) → gắn sẵn vào app
+          if [ -n "$HM_API_URL" ] && [ -n "$HM_GOOGLE_DESKTOP_CLIENT_ID" ]; then
+            for v in HM_API_URL HM_GOOGLE_DESKTOP_CLIENT_ID HM_GOOGLE_DESKTOP_CLIENT_SECRET; do
+              { echo "$v<<__EOF__"; printenv "$v"; echo "__EOF__"; } >> "$GITHUB_ENV"
+            done
+            echo "Đã gắn máy chủ tài khoản: $(echo "$HM_API_URL" | sed -E 's#(https?://[^/]+).*#\1#')"
+          else
+            echo "::warning::Chưa khai báo secrets HM_API_URL / HM_GOOGLE_DESKTOP_CLIENT_ID → app build ra chưa đăng nhập được."
+          fi
       - name: Cấu hình ký mã macOS (nếu có)
         if: runner.os == 'macOS'
         shell: bash
