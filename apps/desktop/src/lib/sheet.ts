@@ -6,7 +6,7 @@
  *    nhạc đầy đủ → người dùng đối chiếu từng ô với ảnh gốc, kết quả + tọa độ lưu vĩnh viễn trong dự án.
  */
 import {
-  applyMissedKey, autoFixIssues, distributeLyrics, lyricTargetsIn, concatScores, exportMusicXml, keyAt, replaceRecognition, sliceScore, timeSigAt, estimateInterline, fastOmrScale, createScore, hasExplicitTime, newId, difficulty, enterEditMode, extractOmrGeometry, extractOmrSignals, reviewIssues, type OmrSignal, type SheetMeasureGeom, extractSheetGeometry, readZip, importMusicXml, markAllUnverified, readMxl,
+  applyMissedKey, autoFixIssues, distributeLyrics, lyricTargetsIn, detectSystems, systemCrop, offsetGeometry, exportMidi, concatScores, exportMusicXml, keyAt, replaceRecognition, sliceScore, timeSigAt, estimateInterline, fastOmrScale, createScore, hasExplicitTime, newId, difficulty, enterEditMode, extractOmrGeometry, extractOmrSignals, reviewIssues, type OmrSignal, type SheetMeasureGeom, extractSheetGeometry, readZip, importMusicXml, markAllUnverified, readMxl,
   regionOf, replaceMeasuresFrom, validateMusic, type RuleIssue, type ScoreDocument, type SheetBox, type SheetSource,
 } from '@holy-melody/music-core';
 import { tauriInvoke } from './fileio';
@@ -244,7 +244,7 @@ export interface OpenSheetHandlers {
   onProgress?(stage: number, line: string): void;
 }
 
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 4;
 
 /** Ghép kết quả các trang thành bản nhạc + tọa độ lớp phủ (null nếu không có nốt hoặc không ghép được) */
 export function buildSheetScore(
@@ -266,10 +266,17 @@ export function buildSheetScore(
   return merged;
 }
 
-/** Một trang đã chuẩn bị cho Audiveris (chế độ nhanh: thu nhỏ về interline ~15 px) */
-interface PreparedPage { name: string; bytes: Uint8Array; scale: number; interline: number | null }
+/** Một trang đã chuẩn bị cho Audiveris (chế độ nhanh: thu nhỏ về interline ~15 px) + vùng cắt hệ thống đầu tiên */
+interface PreparedPage {
+  name: string;
+  bytes: Uint8Array;
+  scale: number;
+  interline: number | null;
+  /** hệ thống (dòng nhạc) đầu tiên — cắt riêng để nhận dạng trước, phát được ngay; null nếu trang chỉ có 1 hệ thống */
+  firstSystem: { bytes: Uint8Array; crop: { x: number; y: number; w: number; h: number } } | null;
+}
 
-/** Ảnh xám (kênh đỏ) từ canvas để đo interline; lấy mẫu thu nhỏ nếu ảnh quá lớn */
+/** Ảnh xám (kênh đỏ) từ canvas để đo interline */
 function grayOf(c: HTMLCanvasElement): { gray: Uint8ClampedArray; w: number; h: number; stride: number } {
   const ctx = c.getContext('2d', { willReadFrequently: true })!;
   const d = ctx.getImageData(0, 0, c.width, c.height);
@@ -281,8 +288,8 @@ async function canvasToPng(c: HTMLCanvasElement): Promise<Uint8Array> {
   return new Uint8Array(await blob.arrayBuffer());
 }
 
-/** Chuẩn bị trang `k` cho chế độ nhanh: PDF vẽ ở 300 dpi; đo interline; thu nhỏ nếu dòng kẻ thưa */
-async function preparePage(asset: SheetAsset, k: number, fileName: string): Promise<PreparedPage> {
+/** Chuẩn bị trang `k`: PDF vẽ ở 300 dpi; đo interline; thu nhỏ nếu dòng kẻ thưa; (tuỳ chọn) cắt hệ thống đầu tiên */
+async function preparePage(asset: SheetAsset, k: number, fileName: string, withFirstSystem: boolean): Promise<PreparedPage> {
   let src: HTMLCanvasElement;
   if (asset.kind === 'pdf') {
     const doc = await pdfOf(asset);
@@ -295,27 +302,61 @@ async function preparePage(asset: SheetAsset, k: number, fileName: string): Prom
   const interline = estimateInterline(g.gray, g.w, g.h, g.stride);
   const scale = fastOmrScale(interline);
   const base = fileName.replace(/\.[^.]+$/, '');
-  if (scale >= 0.98) {
-    // giữ nguyên ảnh gốc (không mã hoá lại) khi không cần thu nhỏ
-    if (asset.kind === 'image') return { name: fileName, bytes: asset.bytes, scale: 1, interline };
-    return { name: `${base}-p${k + 1}.png`, bytes: await canvasToPng(src), scale: 1, interline };
+  let out: HTMLCanvasElement = src;
+  if (scale < 0.98) {
+    out = document.createElement('canvas');
+    out.width = Math.round(src.width * scale);
+    out.height = Math.round(src.height * scale);
+    const ctx = out.getContext('2d')!;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(src, 0, 0, out.width, out.height);
   }
-  const c = document.createElement('canvas');
-  c.width = Math.round(src.width * scale);
-  c.height = Math.round(src.height * scale);
-  const ctx = c.getContext('2d')!;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(src, 0, 0, c.width, c.height);
-  return { name: `${base}-p${k + 1}-fast.png`, bytes: await canvasToPng(c), scale, interline };
+  // hệ thống đầu tiên (gồm trọn khuông đôi piano / các bè nối vạch) — chỉ khi trang có ≥ 2 hệ thống
+  let firstSystem: PreparedPage['firstSystem'] = null;
+  if (withFirstSystem && interline) {
+    try {
+      const systems = detectSystems(g.gray, g.w, g.h, g.stride, interline);
+      const c = systems.length >= 2 ? systemCrop(systems, 0, g.w, g.h, interline) : null;
+      if (c && c.h < g.h * 0.7) {
+        const cc = document.createElement('canvas');
+        cc.width = Math.round(c.w * scale);
+        cc.height = Math.round(c.h * scale);
+        const ctx = cc.getContext('2d')!;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, cc.width, cc.height);
+        ctx.drawImage(src, c.x, c.y, c.w, c.h, 0, 0, cc.width, cc.height);
+        firstSystem = { bytes: await canvasToPng(cc), crop: { x: c.x / g.w, y: c.y / g.h, w: c.w / g.w, h: c.h / g.h } };
+      }
+    } catch {
+      /* không tìm được hệ thống: nhận dạng cả trang như thường */
+    }
+  }
+  if (out === src && asset.kind === 'image') return { name: fileName, bytes: asset.bytes, scale: 1, interline, firstSystem };
+  return { name: `${base}-p${k + 1}${scale < 0.98 ? '-fast' : ''}.png`, bytes: await canvasToPng(out), scale, interline, firstSystem };
+}
+
+/** Kết quả một trang trong bộ đệm (mở lại file đang nhận dạng dở sẽ tiếp tục, không chạy lại trang đã xong) */
+interface PageCache { v: number; xml: string | null; sheet: string; bin?: string }
+
+function fromBase64(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
 
 /**
- * Mở ảnh/PDF cho PLAYER — nhanh nhất có thể, chỉ cần lớp nốt để phát:
+ * Mở ảnh/PDF cho PLAYER — phát được càng sớm càng tốt:
  *  1. hiện bản gốc ngay (không chờ nhận dạng);
- *  2. đã từng mở file này → lấy kết quả đã lưu (theo SHA-256), không chạy lại Audiveris;
- *  3. mỗi trang được thu nhỏ về khoảng cách dòng kẻ ~15 px (đo thực tế: nhanh hơn 20–35%, không sót nốt)
- *     và nhận dạng riêng → trang 1 xong là phát được; máy ≥ 8 nhân chạy song song;
- *  4. nhận dạng KỸ (độ phân giải gốc, có lời ca) + AI chỉ chạy khi "Chuyển sang Editor".
+ *  2. BỘ ĐỆM theo SHA-256 của file: đã mở → lấy lại bản nhạc + MusicXML + MIDI + tọa độ nốt, không chạy Audiveris;
+ *     trang nào đã nhận dạng xong cũng được lưu riêng → mở lại file đang dở chỉ chạy các trang còn lại;
+ *  3. NHẬN DẠNG THEO VÙNG: trang 1 tìm các hệ thống (dòng nhạc) bằng phân tích ảnh; HỆ THỐNG ĐẦU TIÊN (piano: cả hai
+ *     khuông) được cắt riêng và nhận dạng trước (~60% thời gian của cả trang) → phát được ngay; cả trang chạy song song
+ *     (máy ≥ 4 nhân) hoặc ngay sau đó và thay thế khi xong;
+ *  4. mỗi trang thu nhỏ về interline ~15 px (nhanh hơn 20–35%, không sót nốt); nốt mới được nạp thẳng vào engine phát
+ *     (không xuất .mid trung gian) — đang phát mà tới phần chưa nhận dạng thì tự chờ rồi phát tiếp;
+ *  5. nhận dạng KỸ + AI chỉ chạy khi "Chuyển sang Editor".
  */
 export async function openSheet(file: File, h: OpenSheetHandlers): Promise<ScoreDocument> {
   const invoke = tauriInvoke();
@@ -324,24 +365,27 @@ export async function openSheet(file: File, h: OpenSheetHandlers): Promise<Score
   const asset: SheetAsset = { kind, bytes, mime: file.type || (kind === 'pdf' ? 'application/pdf' : 'image/png') };
   const title = file.name.replace(/\.[^.]+$/, '');
   const [hash, pages] = await Promise.all([sha256Hex(bytes), pageSizes(asset, file.name)]);
-
-  // ---- 2. kết quả đã lưu
-  if (invoke) {
-    const cached = (await invoke('omr_cache_get', { hash }).catch(() => null)) as string | null;
-    if (cached) {
-      try {
-        const c = JSON.parse(cached) as { v: number; score: ScoreDocument };
-        if (c.v === CACHE_VERSION && c.score.sheet) {
-          c.score.id = newId('sc');
-          c.score.sheet = { ...c.score.sheet, fileName: file.name, pages };
-          setSheetAsset(c.score.id, asset);
-          h.onPlaceholder(c.score);
-          return c.score;
-        }
-      } catch {
-        /* bộ đệm hỏng: nhận dạng lại */
-      }
+  const cacheGet = async <T,>(key: string): Promise<T | null> => {
+    if (!invoke) return null;
+    const raw = (await invoke('omr_cache_get', { hash: key }).catch(() => null)) as string | null;
+    try {
+      return raw ? (JSON.parse(raw) as T) : null;
+    } catch {
+      return null;
     }
+  };
+  const cachePut = (key: string, value: unknown) => {
+    if (invoke) void invoke('omr_cache_put', { hash: key, json: JSON.stringify(value) }).catch(() => undefined);
+  };
+
+  // ---- 2. kết quả đã lưu (cả bài)
+  const cached = await cacheGet<{ v: number; score: ScoreDocument }>(hash);
+  if (cached?.v === CACHE_VERSION && cached.score.sheet) {
+    cached.score.id = newId('sc');
+    cached.score.sheet = { ...cached.score.sheet, fileName: file.name, pages };
+    setSheetAsset(cached.score.id, asset);
+    h.onPlaceholder(cached.score);
+    return cached.score;
   }
 
   // ---- 1. bản gốc hiện ngay
@@ -354,7 +398,6 @@ export async function openSheet(file: File, h: OpenSheetHandlers): Promise<Score
   const build = (xs: (string | null)[], sx: string[], done: number, final: boolean) =>
     buildSheetScore(xs, sx, { id: placeholder.id, title, sheet: { ...sheetBase, pending: final ? undefined : { done, total } } });
 
-  // ---- 3. từng trang: chuẩn bị (thu nhỏ) → Audiveris
   const xmls: (string | null)[] = new Array(total).fill(null);
   const sheetXmls: string[] = new Array(total).fill('');
   const binaries: (Uint8Array | undefined)[] = new Array(total).fill(undefined);
@@ -362,38 +405,91 @@ export async function openSheet(file: File, h: OpenSheetHandlers): Promise<Score
   let finished = 0;
   let shown = 0;
   let lastError = '';
+
+  // trang đã nhận dạng trong lần mở trước
+  await Promise.all(pages.map(async (_, k) => {
+    const pc = await cacheGet<PageCache>(`${hash}-p${k + 1}`);
+    if (pc?.v !== CACHE_VERSION) return;
+    xmls[k] = pc.xml;
+    sheetXmls[k] = pc.sheet;
+    binaries[k] = pc.bin ? fromBase64(pc.bin) : undefined;
+    settled[k] = true;
+    finished++;
+  }));
+
+  const publish = () => {
+    if (finished === total) return;
+    let prefix = 0;
+    while (prefix < total && settled[prefix]) prefix++;
+    if (prefix > shown) {
+      const part = build(xmls.slice(0, prefix), sheetXmls.slice(0, prefix), finished, false);
+      if (part) {
+        shown = prefix;
+        h.onUpdate(part);
+        return;
+      }
+    }
+    if (!shown && !firstShown) h.onUpdate({ ...placeholder, sheet: { ...placeholder.sheet!, pending: { done: finished, total } } });
+  };
+  let firstShown = false;
+  if (finished) publish();
+
+  // ---- 3. từng trang (trang 1: hệ thống đầu tiên trước)
   const cores = navigator.hardwareConcurrency || 4;
   const workers = Math.max(1, Math.min(total, 4, Math.floor(cores / 4)));
+  const todo = pages.map((_, k) => k).filter((k) => !settled[k]);
   let next = 0;
-  const worker = async (): Promise<void> => {
-    while (next < total) {
-      const k = next++;
-      try {
-        const pg = await preparePage(asset, k, file.name);
-        const r = await runAudiverisFull(pg.name, pg.bytes, { job: `p${k + 1}`, onProgress: k === 0 ? h.onProgress : undefined });
-        xmls[k] = r.xml;
-        sheetXmls[k] = r.sheets.get(1) ?? r.sheets.values().next().value ?? '';
-        binaries[k] = r.binaries.get(1) ?? r.binaries.values().next().value;
-      } catch (e) {
-        lastError = String((e as Error).message ?? e); // trang không có nhạc (bìa, lời): bỏ qua
+  const runPage = async (k: number, pg: PreparedPage) => {
+    try {
+      const r = await runAudiverisFull(pg.name, pg.bytes, { job: `p${k + 1}`, onProgress: k === 0 ? h.onProgress : undefined });
+      xmls[k] = r.xml;
+      sheetXmls[k] = r.sheets.get(1) ?? r.sheets.values().next().value ?? '';
+      binaries[k] = r.binaries.get(1) ?? r.binaries.values().next().value;
+    } catch (e) {
+      lastError = String((e as Error).message ?? e); // trang không có nhạc (bìa, lời): bỏ qua
+    }
+    settled[k] = true;
+    finished++;
+    cachePut(`${hash}-p${k + 1}`, { v: CACHE_VERSION, xml: xmls[k], sheet: sheetXmls[k], bin: binaries[k] && binaries[k]!.length < 3_000_000 ? toBase64(binaries[k]!) : undefined } satisfies PageCache);
+    publish();
+  };
+  /** hệ thống đầu tiên: phát được trước khi cả trang xong */
+  const runFirstSystem = async (pg: PreparedPage) => {
+    if (!pg.firstSystem) return;
+    try {
+      const r = await runAudiverisFull(`${pg.name.replace(/\.png$/, '')}-s1.png`, pg.firstSystem.bytes, { job: 'p1s1' });
+      if (settled[0]) return; // cả trang đã xong trước
+      const sc = importMusicXml(r.xml);
+      const sx = r.sheets.get(1) ?? r.sheets.values().next().value ?? '';
+      const geom = sx ? extractOmrGeometry([sx]) : null;
+      if (!sc.measures.length || !geom || geom.length !== sc.measures.length) return;
+      sc.id = placeholder.id;
+      if (!sc.meta.title || sc.meta.title === 'Untitled') sc.meta.title = title;
+      fixOmrInstruments(sc);
+      markAllUnverified(sc);
+      sc.sheet = { mode: 'overlay', reviews: {}, ...sheetBase, measures: offsetGeometry(geom, pg.firstSystem.crop, 0), pending: { done: 0, total, partial: 'Đang nhận dạng phần còn lại của trang 1…' } };
+      if (!settled[0]) {
+        firstShown = true;
+        h.onUpdate(sc);
       }
-      settled[k] = true;
-      finished++;
-      if (finished === total) continue;
-      let prefix = 0;
-      while (prefix < total && settled[prefix]) prefix++;
-      if (prefix > shown) {
-        const part = build(xmls.slice(0, prefix), sheetXmls.slice(0, prefix), finished, false);
-        if (part) {
-          shown = prefix;
-          h.onUpdate(part);
-          continue;
-        }
-      }
-      if (!shown) h.onUpdate({ ...placeholder, sheet: { ...placeholder.sheet!, pending: { done: finished, total } } });
+    } catch {
+      /* bỏ qua: chờ kết quả cả trang */
     }
   };
-  await Promise.all(Array.from({ length: workers }, () => worker()));
+  const worker = async (): Promise<void> => {
+    while (next < todo.length) {
+      const k = todo[next++]!;
+      const pg = await preparePage(asset, k, file.name, k === 0 && !shown);
+      if (k === 0 && pg.firstSystem) {
+        if (cores >= 4) await Promise.all([runFirstSystem(pg), runPage(k, pg)]);
+        else {
+          await runFirstSystem(pg);
+          await runPage(k, pg);
+        }
+      } else await runPage(k, pg);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(workers, todo.length)) }, () => worker()));
 
   let result = build(xmls, sheetXmls, finished, true);
   if (!result && total > 1 && xmls.some(Boolean)) {
@@ -413,7 +509,14 @@ export async function openSheet(file: File, h: OpenSheetHandlers): Promise<Score
     result.sheet!.signals = await detectHardRegions(sheetXmls, binaries, result.sheet!.measures).catch(() => []);
   }
   h.onUpdate(result);
-  if (invoke) void invoke('omr_cache_put', { hash, json: JSON.stringify({ v: CACHE_VERSION, score: result }) }).catch(() => undefined);
+  // bộ đệm cả bài: bản nhạc (gồm tọa độ nốt trên ảnh) + MusicXML + MIDI
+  let midi = '';
+  try {
+    midi = toBase64(exportMidi(result));
+  } catch {
+    /* bỏ qua */
+  }
+  cachePut(hash, { v: CACHE_VERSION, score: result, musicxml: exportMusicXml(result), midi });
   return result;
 }
 

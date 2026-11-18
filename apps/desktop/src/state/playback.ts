@@ -18,6 +18,8 @@ interface PlaybackState {
   transpose: number;
   /** Phạm vi đang phát (tick) khi phát vùng chọn */
   range: [number, number] | null;
+  /** đang chờ nhận dạng phần tiếp theo để phát tiếp */
+  waiting: boolean;
 
   play(fromTick?: number): Promise<void>;
   pause(): void;
@@ -52,6 +54,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   volume: 0.8,
   transpose: 0,
   range: null,
+  waiting: false,
 
   async play(fromTick) {
     try {
@@ -62,15 +65,19 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
     }
   },
   pause() {
+    waitingAt = null;
+    set({ waiting: false });
     engine.pause();
     set({ status: engine.status() });
   },
   stop() {
+    waitingAt = null;
+    set({ waiting: false });
     engine.stop();
     set({ status: engine.status() });
   },
   toggle() {
-    if (engine.status() === 'playing') {
+    if (engine.status() === 'playing' || get().waiting) {
       get().pause();
       return;
     }
@@ -158,11 +165,43 @@ function reload(tl: PlaybackTimeline | null) {
   engine.load(tl);
 }
 
-// Đồng bộ: timeline mới (chỉnh sửa ở bất kỳ tab nào) → nạp lại engine, giữ vị trí
+/**
+ * Bộ đệm phía trước: bản nhạc ảnh/PDF còn đang nhận dạng mà phát tới hết phần đã có → tạm chờ,
+ * nhận dạng xong phần tiếp theo thì tự phát tiếp đúng chỗ đó (nốt mới nạp thẳng vào engine, không qua file .mid).
+ */
+let waitingAt: number | null = null;
+const activeSheet = () => {
+  const st = useStore.getState();
+  return st.projects.find((p) => p.id === st.activeId)?.score.sheet;
+};
+
+// Đồng bộ: timeline mới (chỉnh sửa ở bất kỳ tab nào / nhận dạng thêm phần mới) → nạp lại engine, giữ vị trí
 useStore.subscribe((s, prev) => {
-  if (s.timeline !== prev.timeline) reload(s.timeline);
+  if (s.timeline === prev.timeline) return;
+  reload(s.timeline);
+  if (waitingAt !== null && s.timeline) {
+    if (s.timeline.totalTicks > waitingAt + 1) {
+      const at = waitingAt;
+      waitingAt = null;
+      usePlayback.setState({ waiting: false });
+      void usePlayback.getState().play(at);
+    } else if (!activeSheet()?.pending) {
+      waitingAt = null;
+      usePlayback.setState({ waiting: false });
+    }
+  }
 });
-const onEnded = () => usePlayback.setState({ status: engine.status(), range: null });
+const onEnded = () => {
+  const { range, loop } = usePlayback.getState();
+  const sh = activeSheet();
+  const tl = useStore.getState().timeline;
+  if (sh?.pending && !sh.pending.error && !range && !loop && tl) {
+    waitingAt = tl.totalTicks;
+    usePlayback.setState({ status: engine.status(), waiting: true });
+    return;
+  }
+  usePlayback.setState({ status: engine.status(), range: null });
+};
 engine.onEnded(onEnded);
 
 // Trong app desktop: chuyển sang engine SoundFont (Rust) khi sẵn sàng, giữ nguyên các thiết lập

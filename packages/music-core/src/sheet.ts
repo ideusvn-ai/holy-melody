@@ -380,3 +380,19 @@ export function hasExplicitTime(xml: string): boolean {
   const firstMeasure = /<measure\b[\s\S]*?<\/measure>/.exec(xml)?.[0] ?? '';
   return /<time[\s>]/.test(firstMeasure);
 }
+
+/**
+ * Tọa độ nhận dạng từ một VÙNG CẮT (vd hệ thống đầu tiên) → tọa độ của cả trang.
+ * `crop` tính bằng tỉ lệ trang (0..1); kết quả gán vào trang `page`.
+ */
+export function offsetGeometry(geom: SheetMeasureGeom[], crop: { x: number; y: number; w: number; h: number }, page: number): SheetMeasureGeom[] {
+  const X = (x: number) => crop.x + x * crop.w;
+  const Y = (y: number) => crop.y + y * crop.h;
+  return geom.map((g) => ({
+    ...g,
+    page,
+    x: X(g.x), y: Y(g.y), w: g.w * crop.w, h: g.h * crop.h,
+    ticks: g.ticks.map(([t, x]) => [t, X(x)] as [number, number]),
+    heads: g.heads?.map(([t, st, x, y, w, h]) => [t, st, X(x), Y(y), w * crop.w, h * crop.h] as [number, number, number, number, number, number]),
+  }));
+}

@@ -368,7 +368,7 @@ export interface SheetSource {
   /** fast = nhận dạng nhanh cho Player (ảnh thu nhỏ, chỉ để phát); full = nhận dạng kỹ khi chuyển sang Editor */
   omrMode?: 'fast' | 'full';
   /** Đang nhận dạng (hiển thị bản gốc ngay, kết quả về dần theo trang); không có = đã xong */
-  pending?: { done: number; total: number; error?: string };
+  pending?: { done: number; total: number; error?: string; /** đang phát phần đã nhận dạng trước (vd hệ thống đầu tiên), phần còn lại đang chạy */ partial?: string };
   /** Vùng khó phát hiện từ dữ liệu Audiveris + ảnh nhị phân (điểm tin cậy thấp, nghi sót hoá biểu…) */
   signals?: OmrSignal[];
   reviews: Record<string, MeasureReview>;

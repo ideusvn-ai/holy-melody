@@ -487,7 +487,7 @@ export const tauriInvoke = (): Invoke | undefined =>
  * Chọn engine tốt nhất: engine Rust (SoundFont) nếu chạy trong app và đã sẵn sàng,
  * ngược lại dùng Web Audio. Engine Rust khởi động nền nên thử lại vài lần.
  */
-export async function createBestEngine(retries = 20): Promise<PlaybackEngine> {
+export async function createBestEngine(retries = 60): Promise<PlaybackEngine> {
   const invoke = tauriInvoke();
   if (invoke) {
     for (let i = 0; i < retries; i++) {

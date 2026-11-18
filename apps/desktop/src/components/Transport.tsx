@@ -10,6 +10,8 @@ export function Transport({ compact = false, onOpenFull }: { compact?: boolean; 
   const pb = usePlayback();
   const tl = useStore((s) => s.timeline);
   const hasSel = useStore((s) => !!s.selection.measureRange || s.selection.noteIds.length > 0);
+  // Player: tempo chỉ ở panel trái (một chỗ duy nhất)
+  const inPlayer = useStore((s) => s.tab === 'player');
   const [pos, setPos] = useState(0);
   const barRef = useRef<HTMLDivElement>(null);
 
@@ -82,11 +84,11 @@ export function Transport({ compact = false, onOpenFull }: { compact?: boolean; 
       <button className={toggle(pb.loop)} title="Lặp" onClick={() => pb.setLoop(!pb.loop)} aria-pressed={pb.loop}><IconLoop /></button>
       <button className={toggle(pb.metronome)} title="Máy nhịp" onClick={() => pb.setMetronome(!pb.metronome)} aria-pressed={pb.metronome}><IconMetronome /></button>
 
-      <label className="flex items-center gap-1.5 text-xs text-muted" title="Tốc độ phát (không đổi cao độ)">
+      {!inPlayer && <label className="flex items-center gap-1.5 text-xs text-muted" title="Tốc độ phát (không đổi cao độ)">
         <span className="tabular-nums w-16 text-right">♩={Math.round(bpm * pb.speed)}</span>
         <input type="range" min={0.25} max={2} step={0.05} value={pb.speed} onChange={(e) => pb.setSpeed(Number(e.target.value))} className="w-20 accent-[var(--accent)]" aria-label="Tốc độ" />
         <span className="tabular-nums w-9">{Math.round(pb.speed * 100)}%</span>
-      </label>
+      </label>}
       {!compact && (
         <label className="flex items-center gap-1.5 text-muted" title="Âm lượng">
           <IconVolume />

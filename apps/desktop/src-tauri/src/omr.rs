@@ -262,6 +262,16 @@ pub async fn omr_run(app: AppHandle, input: String, options: Option<Vec<String>>
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cache_keys() {
+        let h = "a".repeat(64);
+        assert!(super::valid_cache_key(&h));
+        assert!(super::valid_cache_key(&format!("{h}-p12")));
+        assert!(!super::valid_cache_key(&format!("{h}-p")));
+        assert!(!super::valid_cache_key(&format!("{h}/../x")));
+        assert!(!super::valid_cache_key("abc"));
+    }
+
     use super::*;
     #[test]
     fn stages() {
@@ -283,8 +293,19 @@ pub fn omr_temp_input(name: String) -> String {
 // ---------------------------------------------------------------- bộ nhớ đệm kết quả nhận dạng
 // Khoá = SHA-256 của file gốc: mở lại cùng một file là có ngay, không chạy lại Audiveris.
 
+/// Khoá bộ đệm: SHA-256 của file gốc (64 hex), có thể kèm hậu tố trang "-p<số>" (kết quả từng trang, để mở lại tiếp tục được)
+fn valid_cache_key(key: &str) -> bool {
+    if !key.is_ascii() {
+        return false;
+    }
+    let (hash, rest) = key.split_at(key.len().min(64));
+    hash.len() == 64
+        && hash.chars().all(|c| c.is_ascii_hexdigit())
+        && (rest.is_empty() || (rest.len() <= 6 && rest.starts_with("-p") && rest.len() > 2 && rest[2..].chars().all(|c| c.is_ascii_digit())))
+}
+
 fn cache_file(app: &AppHandle, hash: &str) -> Result<PathBuf, String> {
-    if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+    if !valid_cache_key(hash) {
         return Err("Mã băm không hợp lệ".into());
     }
     let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("omr");

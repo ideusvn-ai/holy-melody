@@ -155,6 +155,7 @@ export function SheetView() {
     if (pb.status === 'playing') void pb.play(tick);
   };
 
+  const waiting = usePlayback((x) => x.waiting);
   if (!project || !sheet) return null;
   const width = Math.max(320, Math.min(avail, 1100) * zoom);
   const seekTo = (mi: number) => {
@@ -172,7 +173,8 @@ export function SheetView() {
             <span className="h-3 w-3 shrink-0 rounded-full border-2 border-accent border-t-transparent animate-spin" aria-hidden />
             <span className="truncate">
               Đang nhận dạng{pending.total > 1 ? ` · xong ${pending.done}/${pending.total} trang` : ''}{stage ? ` · ${OMR_STEPS[Math.min(stage, 10) - 1]}` : ''}
-              {pending.done > 0 ? ' · đã phát được phần đã nhận dạng' : ''}
+              {pending.partial ? ' · đã phát được dòng nhạc đầu tiên' : pending.done > 0 ? ' · đã phát được phần đã nhận dạng' : ''}
+              {waiting ? ' · đang chờ phần tiếp theo để phát tiếp…' : ''}
             </span>
           </span>
         ) : pending?.error ? (
