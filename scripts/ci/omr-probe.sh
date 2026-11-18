@@ -24,6 +24,32 @@ for f in ci-logs/omr/in/*; do
   timeout 600 "$EXE" -batch -export -save -output "ci-logs/omr/out/$b" -- "$f" > "ci-logs/omr/out/$b.log" 2>&1
   echo "$b exit=$? $(( $(date +%s) - start ))s" | tee -a ci-logs/omr/summary.txt
 done
+# ---- đo cấu hình NHANH cho Player: tắt lời ca/hợp âm chữ/ký hiệu phụ, thu nhỏ ảnh
+FAST="-constant org.audiveris.omr.sheet.ProcessingSwitches.lyrics=false -constant org.audiveris.omr.sheet.ProcessingSwitches.lyricsAboveStaff=false -constant org.audiveris.omr.sheet.ProcessingSwitches.chordNames=false -constant org.audiveris.omr.sheet.ProcessingSwitches.articulations=false -constant org.audiveris.omr.sheet.ProcessingSwitches.fingerings=false -constant org.audiveris.omr.sheet.ProcessingSwitches.frets=false -constant org.audiveris.omr.sheet.ProcessingSwitches.pluckings=false"
+for f in ci-logs/omr/in/hymn-satb-vi.png ci-logs/omr/in/BachInvention5.jpg ci-logs/omr/in/allegretto.png; do
+  [ -f "$f" ] || continue
+  b=$(basename "${f%.*}")
+  for variant in full fast fast75 fast60 notext; do
+    in="$f"; opts=""
+    case $variant in
+      fast) opts="$FAST";;
+      fast75) opts="$FAST"; in="/tmp/$b-75.png"; convert "$f" -resize 75% "$in";;
+      fast60) opts="$FAST"; in="/tmp/$b-60.png"; convert "$f" -resize 60% "$in";;
+      notext) opts="$FAST -constant org.audiveris.omr.text.Language.defaultSpecification=";;
+    esac
+    t0=$(date +%s%N)
+    timeout 600 "$EXE" $opts -batch -export -save -output "ci-logs/omr/var/$b-$variant" -- "$in" > "ci-logs/omr/var-$b-$variant.log" 2>&1
+    code=$?
+    ms=$(( ($(date +%s%N) - t0) / 1000000 ))
+    m=$(find "ci-logs/omr/var/$b-$variant" -name '*.mxl' | head -1)
+    notes=0; meas=0
+    if [ -n "$m" ]; then x=$(unzip -p "$m" '*.xml' 2>/dev/null | grep -v container); notes=$(echo "$x" | grep -c '<pitch>'); meas=$(echo "$x" | grep -c '<measure '); fi
+    il=$(grep -o 'interline[^,]*' "ci-logs/omr/var-$b-$variant.log" | head -1)
+    echo "VARIANT $b $variant exit=$code ${ms}ms pitches=$notes measures=$meas $il" | tee -a ci-logs/omr/summary.txt
+  done
+done
+rm -rf ci-logs/omr/var
+
 # PDF 2 trang: cả file một lần so với từng trang song song (-sheets)
 cp scripts/ci/omr-samples/two-pages.pdf ci-logs/omr/in/
 t0=$(date +%s); timeout 600 "$EXE" -batch -export -save -output ci-logs/omr/out/pdf-all -- ci-logs/omr/in/two-pages.pdf > ci-logs/omr/out/pdf-all.log 2>&1; echo "pdf-all exit=$? $(( $(date +%s) - t0 ))s" | tee -a ci-logs/omr/summary.txt
