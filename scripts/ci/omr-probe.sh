@@ -24,6 +24,36 @@ for f in ci-logs/omr/in/*; do
   timeout 600 "$EXE" -batch -export -save -output "ci-logs/omr/out/$b" -- "$f" > "ci-logs/omr/out/$b.log" 2>&1
   echo "$b exit=$? $(( $(date +%s) - start ))s" | tee -a ci-logs/omr/summary.txt
 done
+# ---- lời ca tiếng Việt: Audiveris có sẵn dữ liệu OCR nào? thử thêm vie.traineddata
+echo "== tessdata đi kèm Audiveris:"; find "$AUD_DIR" -name '*.traineddata' | head; find / -name 'eng.traineddata' 2>/dev/null | head -3
+mkdir -p /tmp/tess "$HOME/.config/AudiverisLtd/audiveris/tessdata"
+for l in vie eng; do curl -sSL -o /tmp/tess/$l.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/$l.traineddata; done
+ls -la /tmp/tess; cp /tmp/tess/*.traineddata "$HOME/.config/AudiverisLtd/audiveris/tessdata/"
+for variant in default vie; do
+  opts=""; [ $variant = vie ] && opts="-constant org.audiveris.omr.text.Language.defaultSpecification=vie+eng"
+  t0=$(date +%s%N)
+  TESSDATA_PREFIX=/tmp/tess timeout 600 "$EXE" $opts -batch -export -output ci-logs/omr/lyr/$variant -- ci-logs/omr/in/hymn-satb-vi.png > ci-logs/omr/lyr-$variant.log 2>&1
+  m=$(find ci-logs/omr/lyr/$variant -name '*.mxl' | head -1)
+  echo "LYRICS $variant $(( ($(date +%s%N) - t0) / 1000000 ))ms: $(unzip -p "$m" '*.xml' 2>/dev/null | grep -o '<text>[^<]*</text>' | sed 's/<[^>]*>//g' | head -24 | tr '\n' ' ')" | tee -a ci-logs/omr/summary.txt
+  grep -iE "tess|ocr|language" ci-logs/omr/lyr-$variant.log | head -5
+done
+
+# ---- một hệ khuông đầu tiên (crop) so với cả trang
+python3 - <<'PY'
+from PIL import Image
+im = Image.open('ci-logs/omr/in/hymn-satb-vi.png')
+w, h = im.size
+im.crop((0, 380, w, 1180)).save('/tmp/sys1.png')
+PY
+for f in /tmp/sys1.png ci-logs/omr/in/hymn-satb-vi.png; do
+  t0=$(date +%s%N); TESSDATA_PREFIX=/tmp/tess timeout 600 "$EXE" -constant org.audiveris.omr.text.Language.defaultSpecification=vie+eng -batch -export -save -output ci-logs/omr/sys/$(basename $f .png) -- "$f" > ci-logs/omr/sys-$(basename $f .png).log 2>&1
+  m=$(find ci-logs/omr/sys/$(basename $f .png) -name '*.mxl' | head -1)
+  echo "SYSTEM $(basename $f) $(( ($(date +%s%N) - t0) / 1000000 ))ms measures=$(unzip -p "$m" '*.xml' 2>/dev/null | grep -c '<measure ') lyrics=$(unzip -p "$m" '*.xml' 2>/dev/null | grep -c '<lyric')" | tee -a ci-logs/omr/summary.txt
+done
+# khởi động JVM rỗng (chi phí cố định mỗi lần chạy)
+t0=$(date +%s%N); timeout 120 "$EXE" -help > /dev/null 2>&1; echo "JVM-START $(( ($(date +%s%N) - t0) / 1000000 ))ms" | tee -a ci-logs/omr/summary.txt
+rm -rf ci-logs/omr/lyr ci-logs/omr/sys
+
 # ---- đo cấu hình NHANH cho Player: tắt lời ca/hợp âm chữ/ký hiệu phụ, thu nhỏ ảnh
 FAST="-constant org.audiveris.omr.sheet.ProcessingSwitches.lyrics=false -constant org.audiveris.omr.sheet.ProcessingSwitches.lyricsAboveStaff=false -constant org.audiveris.omr.sheet.ProcessingSwitches.chordNames=false -constant org.audiveris.omr.sheet.ProcessingSwitches.articulations=false -constant org.audiveris.omr.sheet.ProcessingSwitches.fingerings=false -constant org.audiveris.omr.sheet.ProcessingSwitches.frets=false -constant org.audiveris.omr.sheet.ProcessingSwitches.pluckings=false"
 for f in ci-logs/omr/in/hymn-satb-vi.png ci-logs/omr/in/BachInvention5.jpg ci-logs/omr/in/allegretto.png; do
