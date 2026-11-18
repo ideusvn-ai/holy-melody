@@ -364,6 +364,8 @@ export interface SheetSource {
   /** overlay: chỉ phủ lớp nhận dạng lên ảnh để phát MIDI; edit: đã dựng khuông nhạc đầy đủ để biên tập */
   mode: 'overlay' | 'edit';
   conversion?: { at: string; credits: number; transactionId?: number };
+  /** fast = nhận dạng nhanh cho Player (ảnh thu nhỏ, chỉ để phát); full = nhận dạng kỹ khi chuyển sang Editor */
+  omrMode?: 'fast' | 'full';
   /** Đang nhận dạng (hiển thị bản gốc ngay, kết quả về dần theo trang); không có = đã xong */
   pending?: { done: number; total: number; error?: string };
   /** Vùng khó phát hiện từ dữ liệu Audiveris + ảnh nhị phân (điểm tin cậy thấp, nghi sót hoá biểu…) */

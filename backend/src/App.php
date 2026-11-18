@@ -289,6 +289,13 @@ final class App
             return Response::json($out + ['balance' => $this->wallet()->balance($req->auth['user_id'])], $out['replayed'] ? 200 : 201);
         }, [$user]);
 
+        // ---- AI đọc lại vùng khó (sau khi đã chuyển sang Editor)
+        $r->add('GET', '/api/v1/omr/ai-status', fn () => ['enabled' => (new \HolyMelody\Omr\OmrAiService($this->db, $this->config))->enabled()]);
+        $r->add('POST', '/api/v1/omr/ai-region', function (Request $req) {
+            $this->limiter()->hit('omr-ai:' . $req->auth['user_id'], 30, 300);
+            return (new \HolyMelody\Omr\OmrAiService($this->db, $this->config))->rerecognize($req->auth['user_id'], $req->json());
+        }, [$user]);
+
         // ---- AI jobs
         $r->add('POST', '/api/v1/ai/jobs', function (Request $req) {
             $b = $req->json();

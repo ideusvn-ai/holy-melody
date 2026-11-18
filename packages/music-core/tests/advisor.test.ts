@@ -91,3 +91,23 @@ test('ô nhịp thiếu phách → gợi ý ký âm', () => {
   const s = buildScore([{ name: 'Melody', measures: ['C4:q D4:q E4:q', 'C4:w'] }]);
   assert.ok(analyzeComposition(s, { categories: ['notation'] }).some((x) => x.rule === 'notation.measure-fill'));
 });
+
+test('bài đang soạn dở: không nhắc quy tắc kết bài; âm vực báo đúng lý do', async () => {
+  const { createScore, placeNote, analyzeComposition } = await import('../src/index.ts');
+  const s = createScore({ measures: 8 });
+  const p = s.parts[0]!;
+  for (const [i, step] of (['F', 'G', 'A'] as const).entries()) {
+    placeNote({ partId: p.id, measureIndex: 0, voice: 1, staff: 0, tick: i * 480, pitch: { step, alter: 0, octave: 5 }, duration: { type: 'quarter', dots: 0 } }).apply(s);
+  }
+  const ids = analyzeComposition(s, { hymnMode: true }).map((x) => x.rule as string);
+  assert.ok(ids.length >= 0);
+  assert.ok(!ids.includes('structure.final-tonic'));
+  assert.ok(!ids.includes('structure.final-barline'));
+  assert.ok(!ids.includes('range.congregation'), 'chưa đủ 4 nốt thì chưa đánh giá âm vực');
+  // đủ nốt và tới ô cuối: kết trên A5 (không phải chủ âm Đô) → có nhắc
+  for (let m = 1; m < 8; m++) placeNote({ partId: p.id, measureIndex: m, voice: 1, staff: 0, tick: 0, pitch: { step: 'A', alter: 0, octave: 5 }, duration: { type: 'whole', dots: 0 } }).apply(s);
+  const ids2 = analyzeComposition(s, { hymnMode: true }).map((x) => x.rule as string);
+  assert.ok(ids2.includes('structure.final-tonic'));
+  const r = analyzeComposition(s, { hymnMode: true }).find((x) => x.rule === 'range.congregation');
+  assert.ok(r && /cao nhất A5/.test(r.message), r?.message);
+});

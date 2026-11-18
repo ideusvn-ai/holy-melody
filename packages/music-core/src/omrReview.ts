@@ -382,3 +382,41 @@ export const applyMissedKey = (from: number, fifths: number, mode: 'major' | 'mi
     s.revision++;
   },
 });
+
+/** Cắt riêng các ô nhịp (thường là một dòng nhạc) thành bản nhạc nhỏ — gửi kèm ảnh cho AI đọc lại */
+export function sliceScore(score: ScoreDocument, indices: number[]): ScoreDocument {
+  const s: ScoreDocument = JSON.parse(JSON.stringify(score));
+  const first = indices[0] ?? 0;
+  const keep = indices.map((i) => s.measures[i]!).filter(Boolean);
+  const ids = new Set(keep.map((m) => m.id));
+  const key = keyAt(score, first);
+  const ts = timeSigAt(score, first);
+  const tempo = [...score.tempoMap].reverse().find((t) => t.measureIndex <= first) ?? score.tempoMap[0];
+  s.measures = keep.map((m, i) => ({ ...m, number: String(i + 1) }));
+  for (const p of s.parts) p.content = Object.fromEntries(keep.map((m) => [m.id, p.content[m.id] ?? []]));
+  s.keyMap = [{ ...key, measureIndex: 0 }];
+  s.timeSigMap = [{ ...ts, measureIndex: 0 }];
+  s.tempoMap = tempo ? [{ ...tempo, measureIndex: 0, offset: 0 }] : [];
+  s.chordSymbols = s.chordSymbols.filter((c) => ids.has(c.measureId));
+  s.dynamics = s.dynamics.filter((d) => ids.has(d.measureId));
+  s.sheet = undefined;
+  s.provenance.unverifiedEventIds = [];
+  return s;
+}
+
+/** Thay kết quả nhận dạng nhanh bằng kết quả nhận dạng KỸ (giữ id, tiêu đề, bố cục, cài đặt phát, file gốc) */
+export const replaceRecognition = (src: ScoreDocument): Command => ({
+  label: 'Nhận dạng kỹ',
+  scope: () => ALL,
+  apply: (s) => {
+    const keep = { id: s.id, title: s.meta.title, layout: s.layout, playback: s.playback, sheet: s.sheet, revision: s.revision };
+    const fresh: ScoreDocument = JSON.parse(JSON.stringify(src));
+    Object.assign(s, fresh);
+    s.id = keep.id;
+    s.meta = { ...fresh.meta, title: keep.title || fresh.meta.title };
+    s.layout = keep.layout;
+    s.playback = keep.playback;
+    s.sheet = keep.sheet ? { ...keep.sheet, measures: fresh.sheet?.measures ?? keep.sheet.measures, signals: fresh.sheet?.signals, omrMode: 'full', pending: undefined } : fresh.sheet;
+    s.revision = keep.revision + 1;
+  },
+});

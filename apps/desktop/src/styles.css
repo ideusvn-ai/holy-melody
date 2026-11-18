@@ -1,4 +1,10 @@
 @import "tailwindcss";
+/* Bravura (SMuFL) © Steinberg Media Technologies, SIL Open Font License 1.1 — xem public/fonts/Bravura-OFL.txt */
+@font-face {
+  font-family: "Bravura";
+  src: url("/fonts/Bravura.woff2") format("woff2");
+  font-display: block;
+}
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
@@ -57,6 +63,7 @@
   --color-warn: var(--warn);
   --color-info: var(--info);
   --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-smufl: "Bravura", "Bravura Text", serif;
   --font-music: "Bravura Text", "Noto Music", "Segoe UI Symbol", "Apple Symbols", serif;
 }
 
@@ -119,3 +126,17 @@ input, textarea, select { user-select: text; }
 }
 /* ---- phím đàn ảo đang được nhấn */
 .hm-key-down { box-shadow: inset 0 0 0 2px var(--accent), 0 0 12px 2px var(--hl); }
+.hm-sheet-head { fill: transparent; stroke: transparent; cursor: pointer; }
+.hm-sheet-head:hover { stroke: var(--accent); stroke-width: 1.5px; }
+.hm-sheet-head-sel { stroke: var(--accent); stroke-width: 2.5px; fill: var(--accent); fill-opacity: 0.18; }
+/* nốt mờ khi nhập nốt */
+.hm-ghost { fill: var(--accent); fill-opacity: 0.45; stroke: var(--accent); stroke-opacity: 0.5; stroke-width: 0.9; }
+.hm-ghost text { fill-opacity: 0.8; stroke: none; font-family: system-ui, sans-serif; }
+.hm-rest { cursor: pointer; }
+.hm-rest:hover { fill: var(--accent); }
+/* lời ca dịch theo tay nắm khi đang kéo */
+.hm-lyric { transform: translateY(var(--lyr-dy, 0px)); }
+.hm-lyric-handle { cursor: ns-resize; }
+.hm-lyric-handle rect { fill: var(--surface-2, #eee); stroke: var(--accent); stroke-width: 0.8; transform: translateY(var(--lyr-dy, 0px)); }
+.hm-lyric-handle line { stroke: var(--accent); stroke-width: 0.9; transform: translateY(var(--lyr-dy, 0px)); }
+.hm-lyric-handle:hover rect { fill: var(--accent-soft, #fde7d3); }

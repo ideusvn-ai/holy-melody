@@ -17,3 +17,6 @@ export * from './lyrics.js';
 export * from './mxl.js';
 export * from './sheet.js';
 export * from './omrReview.js';
+export * from './accompaniment.js';
+export * from './input.js';
+export * from './interline.js';

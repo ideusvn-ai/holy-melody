@@ -6,10 +6,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { cursorX, HighlightIndex, measureAtTick, measureTicks, type SheetSource } from '@holy-melody/music-core';
 import { useActiveProject, useStore } from '../state/store';
-import { playbackPosition, usePlayback } from '../state/playback';
+import { markSelectionPlayed, playbackPosition, usePlayback } from '../state/playback';
 import { OMR_STEPS, useOmrProgress } from '../state/omrProgress';
 import { getSheetAsset, imageUrl, renderPdfPage, type SheetAsset } from '../lib/sheet';
 import { ConvertDialog } from './ConvertDialog';
+import { CountIn } from './CountIn';
 
 export function SheetView() {
   const project = useActiveProject();
@@ -126,6 +127,34 @@ export function SheetView() {
     return () => cancelAnimationFrame(raf);
   }, [tl, hi, project, sheet, byMeasure, partStaff]);
 
+  // ---- chọn nốt bằng cách bấm đầu nốt: chọn các nốt bắt đầu tại phách đó (đúng bè/khuông), Play phát từ đó
+  const selIds = useStore((s) => s.selection.noteIds);
+  const selectedKeys = useMemo(() => {
+    const out = new Set<string>();
+    if (!tl || !selIds.length) return out;
+    for (const sp of tl.spans) {
+      if (!selIds.includes(sp.noteId)) continue;
+      const pm = measureAtTick(tl, sp.startTick);
+      const [first, n] = partStaff.get(sp.partId) ?? [0, 99];
+      if (pm) for (let st = first; st < first + n; st++) out.add(`${pm.measureIndex}|${sp.startTick - pm.startTick}|${st}`);
+    }
+    return out;
+  }, [tl, selIds, partStaff]);
+  const pickHead = (mi: number, rel: number, staff: number) => {
+    if (!tl) return;
+    const pm = tl.measures.find((m) => m.measureIndex === mi);
+    if (!pm) return;
+    const tick = pm.startTick + rel;
+    const ids = tl.spans
+      .filter((sp) => sp.startTick === tick && (() => { const [f, n] = partStaff.get(sp.partId) ?? [0, 99]; return staff >= f && staff < f + n; })())
+      .map((sp) => sp.noteId);
+    useStore.getState().select({ noteIds: ids, eventIds: [] });
+    markSelectionPlayed(ids);
+    const pb = usePlayback.getState();
+    pb.seek(tick);
+    if (pb.status === 'playing') void pb.play(tick);
+  };
+
   if (!project || !sheet) return null;
   const width = Math.max(320, Math.min(avail, 1100) * zoom);
   const seekTo = (mi: number) => {
@@ -170,6 +199,7 @@ export function SheetView() {
         {asset && sheet.pages.map((pg, i) => (
           <SheetPageView
             key={i} index={i} page={pg} asset={asset} width={width} sheet={sheet} showBoxes={showBoxes} onSeek={seekTo}
+            selectedKeys={selectedKeys} onPickHead={pickHead}
             measureIds={project.score.measures.map((m) => m.id)}
             pageRef={(el) => { if (el) pageEls.current.set(i, el); else pageEls.current.delete(i); }}
             layerRef={(el) => { if (el) layers.current.set(i, el); else layers.current.delete(i); }}
@@ -188,9 +218,10 @@ export function SheetView() {
 function SheetPageView(props: {
   index: number; page: SheetSource['pages'][number]; asset: SheetAsset; width: number; sheet: SheetSource;
   showBoxes: boolean; onSeek: (mi: number) => void; measureIds: string[];
+  selectedKeys: Set<string>; onPickHead: (mi: number, rel: number, staff: number) => void;
   pageRef: (el: HTMLDivElement | null) => void; layerRef: (el: SVGGElement | null) => void; cursorRef: (el: SVGLineElement | null) => void;
 }) {
-  const { index, page, asset, width, sheet, showBoxes, onSeek, measureIds, pageRef, layerRef, cursorRef } = props;
+  const { index, page, asset, width, sheet, showBoxes, onSeek, measureIds, pageRef, layerRef, cursorRef, selectedKeys, onPickHead } = props;
   const canvas = useRef<HTMLCanvasElement>(null);
   const aspect = page.width && page.height ? page.height / page.width : 1.414;
   const height = width * aspect;
@@ -205,6 +236,8 @@ function SheetPageView(props: {
   const measures = sheet.measures.filter((g) => g.page === index);
   return (
     <div ref={pageRef} className="relative mx-auto mb-6 bg-white shadow-md" style={{ width, height }}>
+      {/* dạo đầu + đếm vào: ngay phía trên dòng nhạc đầu tiên của bản gốc */}
+      {index === 0 && measures[0] && <CountIn left={measures[0].x * width} top={measures[0].y * height} />}
       {asset.kind === 'pdf' ? (
         <canvas ref={canvas} style={{ width, height }} className="block" aria-label={`Trang ${index + 1}`} />
       ) : (
@@ -226,6 +259,19 @@ function SheetPageView(props: {
             </rect>
           );
         })}
+        {/* đầu nốt bấm được: chọn nốt → Play phát từ nốt đó */}
+        {measures.flatMap((g) => (g.heads ?? []).map((h, k) => {
+          const sel = selectedKeys.has(`${g.measureIndex}|${h[0]}|${h[1]}`);
+          return (
+            <ellipse
+              key={`${g.measureIndex}-${k}`} cx={h[2] + h[4] / 2} cy={(h[3] + h[5] / 2) * aspect} rx={h[4] * 0.85} ry={h[5] * aspect * 0.85}
+              className={`hm-sheet-head ${sel ? 'hm-sheet-head-sel' : ''}`} vectorEffect="non-scaling-stroke"
+              onClick={(e) => { e.stopPropagation(); onPickHead(g.measureIndex, h[0], h[1]); }}
+            >
+              <title>Chọn nốt · bấm Play để phát từ đây</title>
+            </ellipse>
+          );
+        }))}
         {/* đầu nốt đang vang: vẽ trực tiếp mỗi khung hình (không qua React) */}
         <g ref={layerRef} className="hm-sheet-notes" pointerEvents="none" />
         <line ref={cursorRef} y1={0} y2={0} stroke="var(--accent)" strokeWidth={2} vectorEffect="non-scaling-stroke" style={{ display: 'none' }} />

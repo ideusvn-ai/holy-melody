@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  addChordTone, addGraceNote, addInterval, addTriad, buildTimeline, chord, deleteEvent, deleteMeasure, insertMeasure, keyAlterFor, keyAt,
+  addChordTone, durationTicks, placeNote, addGraceNote, addInterval, addTriad, buildTimeline, chord, deleteEvent, deleteMeasure, insertMeasure, keyAlterFor, keyAt,
   makeTuplet, pitchToMidi, replaceEvent, spellMidi, ScoreIndex, setBarline, setDuration, setDynamic, setKeySignature, setLyric, setPitch,
   setTimeSignature, timeSigAt, toggleArticulation, toggleOrnament, toggleRepeat, toggleSlur, toggleTie, transpose, transposePitch,
   type DurationType, type NoteLocation, type Step,
@@ -14,6 +14,7 @@ import { Transport } from '../components/Transport';
 import { useActiveProject, useStore } from '../state/store';
 import { EditGate, ReviewPanel } from '../components/ReviewPanel';
 import { ConvertDialog } from '../components/ConvertDialog';
+import { MidiDevice } from '../components/MidiDevice';
 import { usePlayback } from '../state/playback';
 
 const DURATIONS: { type: DurationType; key: string; label: string; glyph: string }[] = [
@@ -43,6 +44,10 @@ export function EditorLeft() {
   const loc = useSelectedEvent();
   const exec = useStore((s) => s.exec);
   const sel = useStore((s) => s.selection);
+  const noteInput = useStore((s) => s.noteInput);
+  const inputDuration = useStore((s) => s.inputDuration);
+  const setNoteInput = useStore((s) => s.setNoteInput);
+  const setInputDuration = useStore((s) => s.setInputDuration);
   if (!project || project.score.sheet?.mode === 'overlay') return null;
   const ev = loc?.event;
   const chordEv = ev?.kind === 'chord' ? ev : undefined;
@@ -68,9 +73,20 @@ export function EditorLeft() {
     <div className="p-3 space-y-4">
       {group('Notes', (
         <>
+          <button className={`w-full h-9 rounded-md border text-[12.5px] font-medium ${noteInput ? 'bg-accent text-accent-fg border-accent' : 'border-line hover:bg-surface-2'}`}
+            onClick={() => setNoteInput(!noteInput)} title="Nhập nốt (N): bấm lên khuông để đặt nốt, giữ Shift để thêm vào hợp âm">
+            {noteInput ? '✎ Đang nhập nốt (N)' : '✎ Nhập nốt (N)'}
+          </button>
+          {noteInput && <p className="text-[10.5px] text-muted leading-snug">Chọn trường độ rồi bấm lên khuông đúng cao độ: nốt ghi đè dấu lặng. Shift+bấm: thêm vào hợp âm. Esc: thoát.</p>}
           <div className="grid grid-cols-4 gap-1">
-            {DURATIONS.map((d) => btn(<span className="text-lg font-[var(--font-music)]">{d.glyph}</span>, `${d.label} (${d.key})`, () => ev && exec(setDuration(ev.id, { ...ev.duration, type: d.type })), !ev, ev?.duration.type === d.type))}
-            {btn(<span className="text-lg">𝅭</span>, 'Chấm dôi (.)', () => ev && exec(setDuration(ev.id, { ...ev.duration, dots: (ev.duration.dots + 1) % 3 })), !ev, !!ev?.duration.dots)}
+            {DURATIONS.map((d) => btn(<span className="text-lg font-[var(--font-music)]">{d.glyph}</span>, `${d.label} (${d.key})`, () => {
+              setInputDuration({ type: d.type, dots: 0 });
+              if (ev && !noteInput) exec(setDuration(ev.id, { ...ev.duration, type: d.type }));
+            }, false, noteInput ? inputDuration.type === d.type : ev?.duration.type === d.type))}
+            {btn(<span className="text-lg">𝅭</span>, 'Chấm dôi (.)', () => {
+              if (noteInput) setInputDuration({ ...inputDuration, dots: (inputDuration.dots + 1) % 2 });
+              else if (ev) exec(setDuration(ev.id, { ...ev.duration, dots: (ev.duration.dots + 1) % 3 }));
+            }, !noteInput && !ev, noteInput ? !!inputDuration.dots : !!ev?.duration.dots)}
           </div>
           <div className="grid grid-cols-4 gap-1">
             {([['♭', -1, 'Giáng (-)'], ['♮', 0, 'Bình (=)'], ['♯', 1, 'Thăng (+)']] as const).map(([g, a, t]) => btn(<span className="text-base">{g}</span>, t, () => noteLoc && exec(setPitch(noteLoc.note.id, { ...noteLoc.note.pitch, alter: a })), !noteLoc, noteLoc?.note.pitch.alter === a))}
@@ -149,8 +165,9 @@ export function EditorLeft() {
         </div>
       ))}
       <p className="text-[10px] text-muted leading-snug">
-        Phím tắt: A–G cao độ · Shift+A–G thêm vào hợp âm · ↑/↓ bậc theo giọng · Shift+↑/↓ nửa cung · 1–7 trường độ · . chấm dôi · T nối · S luyến · Ctrl+3 liên 3 · Alt+2…8 thêm quãng · Delete dấu lặng · ⌘/Ctrl+Z hoàn tác.
+        Phím tắt: N nhập nốt (bấm lên khuông) · A–G cao độ (tự sang nốt kế) · Shift+A–G thêm vào hợp âm · ↑/↓ bậc theo giọng · Shift+↑/↓ nửa cung · 1–7 trường độ · . chấm dôi · T nối · S luyến · Ctrl+3 liên 3 · Alt+2…8 thêm quãng · Delete dấu lặng · ⌘/Ctrl+Z hoàn tác.
       </p>
+      <MidiDevice />
     </div>
   );
 }
@@ -197,12 +214,46 @@ export function EditorCenter() {
       </>
     );
   }
+  const ready = project ? singerReadiness(project.score) : { ok: false, reason: '' };
   return (
     <div className="flex-1 flex flex-col min-h-0">
+      <div className="flex items-center gap-2 h-10 px-3 border-b border-line bg-surface text-[12px]">
+        <span className="text-muted truncate">{project?.score.meta.title}</span>
+        <div className="flex-1" />
+        <span className="text-muted hidden md:inline">{ready.ok ? 'Đủ nốt và lời để AI hát' : ready.reason}</span>
+        <button className="h-7 px-3 rounded-md bg-accent text-accent-fg font-semibold disabled:opacity-40" disabled={!ready.ok}
+          title={ready.ok ? 'Chuyển bản đang soạn sang AI Singer' : ready.reason} onClick={() => setTab('singer')}>
+          ♪ AI Singer
+        </button>
+      </div>
       <ScoreView editable flaggedNoteIds={flagged} />
       <Transport compact onOpenFull={() => setTab('player')} />
     </div>
   );
+}
+
+/** Bản nhạc có đủ nốt và lời để AI hát chưa (bè có lời nhiều nhất phải có lời ở ≥ 70% số nốt, tối thiểu 4 nốt) */
+export function singerReadiness(score: import('@holy-melody/music-core').ScoreDocument): { ok: boolean; reason: string } {
+  let best = { notes: 0, sung: 0 };
+  for (const p of score.parts) {
+    let notes = 0;
+    let sung = 0;
+    for (const m of score.measures) {
+      for (const v of p.content[m.id] ?? []) {
+        for (const e of v.events) {
+          if (e.kind !== 'chord' || e.grace) continue;
+          if (e.notes.some((n) => n.tieStop)) continue; // nốt nối tiếp không cần lời
+          notes++;
+          if (e.lyrics?.some((l) => l.text.trim())) sung++;
+        }
+      }
+    }
+    if (sung > best.sung || (sung === best.sung && notes > best.notes)) best = { notes, sung };
+  }
+  if (best.notes < 4) return { ok: false, reason: 'Cần ít nhất 4 nốt để AI hát' };
+  const ratio = best.sung / best.notes;
+  if (ratio < 0.7) return { ok: false, reason: `Mới có lời cho ${best.sung}/${best.notes} nốt: thêm lời ở bảng Lời ca` };
+  return { ok: true, reason: '' };
 }
 
 /** Nhập nốt step-time từ bàn phím MIDI: ghi vào event đang chọn rồi chuyển sang event kế tiếp */
@@ -240,9 +291,14 @@ function useEditorShortcuts() {
       if (/^[a-gA-G]$/.test(k) && !e.metaKey && !e.ctrlKey && evLoc) {
         e.preventDefault();
         const step = k.toUpperCase() as Step;
-        const prev = noteLoc?.note.pitch ?? { step: 'C' as Step, alter: 0, octave: 4 };
-        // chọn quãng tám gần nốt hiện tại nhất
-        const cands = [prev.octave - 1, prev.octave, prev.octave + 1].map((o) => ({ step, alter: 0, octave: o }));
+        const order = buildOrder(project.score, evLoc.part.id, evLoc.voice.number);
+        const at = order.findIndex((x) => x.eventId === evLoc.event.id);
+        // cao độ tham chiếu: nốt đang chọn, hoặc nốt gần nhất phía trước (để chọn quãng tám hợp lý)
+        const sidx = new ScoreIndex(project.score);
+        const prevNoteId = noteLoc?.note.id ?? order.slice(0, Math.max(0, at)).reverse().find((x) => x.noteId)?.noteId;
+        const prev = (prevNoteId && sidx.note(prevNoteId)?.note.pitch) || { step: 'C' as Step, alter: 0, octave: evLoc.event.staff > 0 || evLoc.part.staves[evLoc.event.staff]?.clef.sign === 'F' ? 3 : 4 };
+        const fifths = keyAt(project.score, evLoc.measureIndex).fifths;
+        const cands = [prev.octave - 1, prev.octave, prev.octave + 1].map((o) => ({ step, alter: keyAlterFor(step, fifths), octave: o }));
         const cur = prev.octave * 7 + 'CDEFGAB'.indexOf(prev.step);
         const p = cands.sort((a, b) => Math.abs(a.octave * 7 + 'CDEFGAB'.indexOf(a.step) - cur) - Math.abs(b.octave * 7 + 'CDEFGAB'.indexOf(b.step) - cur))[0]!;
         if (e.shiftKey && evLoc.event.kind === 'chord') {
@@ -250,9 +306,20 @@ function useEditorShortcuts() {
         } else if (noteLoc) {
           st.exec(setPitch(noteLoc.note.id, p));
         } else {
-          const next = chord([p], evLoc.event.duration, { id: evLoc.event.id, staff: evLoc.event.staff });
-          st.exec(replaceEvent(evLoc.event.id, next));
-          st.select({ noteIds: [next.notes[0]!.id], eventIds: [next.id] });
+          // dấu lặng → nốt (theo trường độ đang chọn khi nhập nốt), rồi tự sang vị trí kế tiếp để gõ tiếp
+          const v = evLoc.voice.events;
+          let tick = 0;
+          for (const x of v) {
+            if (x.id === evLoc.event.id) break;
+            if (!(x.kind === 'chord' && x.grace)) tick += durationTicks(x.duration);
+          }
+          const cmd = placeNote({ partId: evLoc.part.id, measureIndex: evLoc.measureIndex, voice: evLoc.voice.number, staff: evLoc.event.staff, tick, pitch: p, duration: st.noteInput ? st.inputDuration : evLoc.event.duration });
+          st.exec(cmd);
+          const ord2 = buildOrder(project.score, evLoc.part.id, evLoc.voice.number);
+          const k2 = ord2.findIndex((x) => x.eventId === cmd.result.eventId);
+          const nx = ord2[k2 + 1];
+          if (nx) st.select({ eventIds: [nx.eventId], noteIds: nx.noteId ? [nx.noteId] : [], measureRange: undefined });
+          else if (cmd.result.noteId) st.select({ noteIds: [cmd.result.noteId], eventIds: [cmd.result.eventId!] });
         }
         usePlayback.getState().engine.previewNote(pitchToMidi(p));
         return;
@@ -292,10 +359,20 @@ function useEditorShortcuts() {
         st.exec(addInterval(evLoc.event.id, Number(e.code.slice(5))));
         return;
       }
-      const dur = DURATIONS.find((d) => d.key === k);
-      if (dur && evLoc && !e.metaKey && !e.ctrlKey) {
+      if (k.toLowerCase() === 'n' && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
-        st.exec(setDuration(evLoc.event.id, { ...evLoc.event.duration, type: dur.type, tuplet: undefined }));
+        st.setNoteInput(!st.noteInput);
+        return;
+      }
+      if (k === 'Escape' && st.noteInput) {
+        st.setNoteInput(false);
+        return;
+      }
+      const dur = DURATIONS.find((d) => d.key === k);
+      if (dur && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        st.setInputDuration({ type: dur.type, dots: 0 });
+        if (evLoc) st.exec(setDuration(evLoc.event.id, { ...evLoc.event.duration, type: dur.type, tuplet: undefined }));
         return;
       }
       if (k === '.' && evLoc) {

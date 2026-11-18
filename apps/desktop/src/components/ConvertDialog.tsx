@@ -37,11 +37,21 @@ export function ConvertDialog({ onClose }: { onClose: () => void }) {
         },
         setProg,
         () => cancelled.current,
+        async (req) => {
+          try {
+            return await acc.api<{ musicxml: string; model: string }>('POST', '/api/v1/omr/ai-region', { source_hash: sheet.hash, ...req });
+          } catch (e) {
+            const m = String((e as Error).message ?? e);
+            if (/AI_UNAVAILABLE|chưa cấu hình/i.test(m)) throw new Error('AI chưa được cấu hình trên máy chủ');
+            throw e;
+          }
+        },
       );
       const flagged = new Set(r.issues.filter((i) => i.severity === 'error').map((i) => i.measureIndex)).size;
       st.setTab('editor');
       st.notify(
-        `Đã dựng khuông nhạc. Tự sửa ${r.fixed} lỗi an toàn, nhận dạng lại ${r.regionsTried} vùng (${r.regionsImproved} vùng tốt hơn). ` +
+        `Đã dựng khuông nhạc (nhận dạng kỹ). Tự sửa ${r.fixed} lỗi an toàn, nhận dạng lại ${r.regionsTried} vùng (${r.regionsImproved} vùng tốt hơn)` +
+          (r.aiTried ? `, AI đọc lại ${r.aiTried} dòng (${r.aiImproved} dòng tốt hơn). ` : r.aiNote ? ` (bỏ qua AI: ${r.aiNote}). ` : '. ') +
           (flagged ? `Còn ${flagged} ô cần bạn đối chiếu ở bảng "Đối chiếu".` : 'Không còn ô nào lỗi quy tắc — vẫn nên đối chiếu nhanh với bản gốc.'),
       );
       onClose();
@@ -59,9 +69,10 @@ export function ConvertDialog({ onClose }: { onClose: () => void }) {
           <p className="text-muted text-[12px] mt-0.5 truncate">{sheet.fileName}</p>
         </header>
         <ul className="space-y-1.5 text-[12.5px]">
-          <li>• Dựng khuông nhạc đầy đủ từ kết quả Audiveris để bạn biên tập.</li>
+          <li>• <b>Nhận dạng kỹ</b> lại toàn bộ ở độ phân giải gốc, có đọc lời ca (Player chỉ dùng bản nhanh để phát).</li>
           <li>• <b>Kiểm tra quy tắc</b>: trường độ ô nhịp, dấu hoá, dấu nối, phân bè, cấu trúc không hợp lệ. Chỉ tự sửa lỗi an toàn; ô lấy đà, cadenza và cách ký âm đặc biệt được giữ nguyên.</li>
           <li>• <b>Nhận dạng lại theo vùng</b>: dòng nhạc có ô lỗi được cắt riêng, phóng to và chạy lại với cấu hình khác. Chỉ thay ô lỗi, không chạy lại cả trang.</li>
+          <li>• <b>AI đọc ảnh</b> cho những dòng vẫn còn lỗi; chỉ nhận kết quả AI khi số lỗi giảm.</li>
           <li>• <b>Đối chiếu</b>: bạn so từng ô với ảnh gốc, sửa một lần. Kết quả và tọa độ được lưu luôn trong dự án.</li>
         </ul>
         <div className="rounded-md bg-surface-2 px-3 py-2 text-[12px]">
@@ -76,7 +87,7 @@ export function ConvertDialog({ onClose }: { onClose: () => void }) {
         {prog && !error && (
           <div className="space-y-1">
             <div className="h-1.5 rounded-full bg-surface-2 overflow-hidden">
-              <div className="h-full bg-accent transition-all" style={{ width: `${prog.phase === 'charge' ? 5 : prog.phase === 'validate' ? 12 : prog.phase === 'done' ? 100 : 12 + (88 * prog.done) / Math.max(1, prog.total)}%` }} />
+              <div className="h-full bg-accent transition-all" style={{ width: `${prog.phase === 'charge' ? 4 : prog.phase === 'full' ? 15 : prog.phase === 'validate' ? 35 : prog.phase === 'done' ? 100 : (prog.phase === 'ai' ? 70 : 38) + (30 * prog.done) / Math.max(1, prog.total)}%` }} />
             </div>
             <p className="text-[11px] text-muted truncate">{prog.text}</p>
           </div>

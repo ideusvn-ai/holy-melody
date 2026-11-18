@@ -6,7 +6,7 @@
  *    nhạc đầy đủ → người dùng đối chiếu từng ô với ảnh gốc, kết quả + tọa độ lưu vĩnh viễn trong dự án.
  */
 import {
-  applyMissedKey, autoFixIssues, concatScores, createScore, hasExplicitTime, newId, difficulty, enterEditMode, extractOmrGeometry, extractOmrSignals, reviewIssues, type OmrSignal, type SheetMeasureGeom, extractSheetGeometry, readZip, importMusicXml, markAllUnverified, readMxl,
+  applyMissedKey, autoFixIssues, concatScores, exportMusicXml, keyAt, replaceRecognition, sliceScore, timeSigAt, estimateInterline, fastOmrScale, createScore, hasExplicitTime, newId, difficulty, enterEditMode, extractOmrGeometry, extractOmrSignals, reviewIssues, type OmrSignal, type SheetMeasureGeom, extractSheetGeometry, readZip, importMusicXml, markAllUnverified, readMxl,
   regionOf, replaceMeasuresFrom, validateMusic, type RuleIssue, type ScoreDocument, type SheetBox, type SheetSource,
 } from '@holy-melody/music-core';
 import { tauriInvoke } from './fileio';
@@ -244,14 +244,78 @@ export interface OpenSheetHandlers {
   onProgress?(stage: number, line: string): void;
 }
 
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
+
+/** Ghép kết quả các trang thành bản nhạc + tọa độ lớp phủ (null nếu không có nốt hoặc không ghép được) */
+export function buildSheetScore(
+  xmls: (string | null)[], sheetXmls: string[], base: { id: string; title: string; sheet: Omit<SheetSource, 'measures' | 'reviews' | 'mode'> & Partial<SheetSource> },
+): ScoreDocument | null {
+  const parts = xmls.map((x) => (x ? importMusicXml(x) : null));
+  const present = parts.map((p, i) => ({ p, i })).filter((x) => x.p && x.p.measures.length);
+  if (!present.length) return null;
+  const merged = present.length === 1 ? present[0]!.p! : concatScores(present.map((x) => x.p!), present.map((x) => hasExplicitTime(xmls[x.i]!)));
+  if (!merged) return null;
+  const geom = sheetXmls.some(Boolean) ? extractOmrGeometry(sheetXmls) : null;
+  const measures = geom && geom.length === merged.measures.length ? geom
+    : xmls.length === 1 && xmls[0] ? (extractSheetGeometry(xmls[0])?.measures ?? []) : [];
+  merged.id = base.id;
+  if (!merged.meta.title || merged.meta.title === 'Untitled') merged.meta.title = base.title;
+  fixOmrInstruments(merged);
+  markAllUnverified(merged);
+  merged.sheet = { mode: 'overlay', reviews: {}, ...base.sheet, measures };
+  return merged;
+}
+
+/** Một trang đã chuẩn bị cho Audiveris (chế độ nhanh: thu nhỏ về interline ~15 px) */
+interface PreparedPage { name: string; bytes: Uint8Array; scale: number; interline: number | null }
+
+/** Ảnh xám (kênh đỏ) từ canvas để đo interline; lấy mẫu thu nhỏ nếu ảnh quá lớn */
+function grayOf(c: HTMLCanvasElement): { gray: Uint8ClampedArray; w: number; h: number; stride: number } {
+  const ctx = c.getContext('2d', { willReadFrequently: true })!;
+  const d = ctx.getImageData(0, 0, c.width, c.height);
+  return { gray: d.data, w: c.width, h: c.height, stride: 4 };
+}
+
+async function canvasToPng(c: HTMLCanvasElement): Promise<Uint8Array> {
+  const blob = await new Promise<Blob>((r, j) => c.toBlob((b) => (b ? r(b) : j(new Error('Không tạo được ảnh trang'))), 'image/png'));
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+/** Chuẩn bị trang `k` cho chế độ nhanh: PDF vẽ ở 300 dpi; đo interline; thu nhỏ nếu dòng kẻ thưa */
+async function preparePage(asset: SheetAsset, k: number, fileName: string): Promise<PreparedPage> {
+  let src: HTMLCanvasElement;
+  if (asset.kind === 'pdf') {
+    const doc = await pdfOf(asset);
+    const page = await doc.getPage(k + 1);
+    src = await pageRaster(asset, k, page.getViewport({ scale: 300 / 72 }).width);
+  } else {
+    src = await pageRaster(asset, 0, (await createImageBitmap(new Blob([asset.bytes as BlobPart], { type: asset.mime }))).width);
+  }
+  const g = grayOf(src);
+  const interline = estimateInterline(g.gray, g.w, g.h, g.stride);
+  const scale = fastOmrScale(interline);
+  const base = fileName.replace(/\.[^.]+$/, '');
+  if (scale >= 0.98) {
+    // giữ nguyên ảnh gốc (không mã hoá lại) khi không cần thu nhỏ
+    if (asset.kind === 'image') return { name: fileName, bytes: asset.bytes, scale: 1, interline };
+    return { name: `${base}-p${k + 1}.png`, bytes: await canvasToPng(src), scale: 1, interline };
+  }
+  const c = document.createElement('canvas');
+  c.width = Math.round(src.width * scale);
+  c.height = Math.round(src.height * scale);
+  const ctx = c.getContext('2d')!;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src, 0, 0, c.width, c.height);
+  return { name: `${base}-p${k + 1}-fast.png`, bytes: await canvasToPng(c), scale, interline };
+}
 
 /**
- * Mở ảnh/PDF nhanh nhất có thể:
+ * Mở ảnh/PDF cho PLAYER — nhanh nhất có thể, chỉ cần lớp nốt để phát:
  *  1. hiện bản gốc ngay (không chờ nhận dạng);
  *  2. đã từng mở file này → lấy kết quả đã lưu (theo SHA-256), không chạy lại Audiveris;
- *  3. PDF nhiều trang → mỗi trang một tiến trình Audiveris chạy song song, trang nào xong trước phát được trước;
- *  4. truyền file dạng nhị phân thô giữa giao diện và Rust.
+ *  3. mỗi trang được thu nhỏ về khoảng cách dòng kẻ ~15 px (đo thực tế: nhanh hơn 20–35%, không sót nốt)
+ *     và nhận dạng riêng → trang 1 xong là phát được; máy ≥ 8 nhân chạy song song;
+ *  4. nhận dạng KỸ (độ phân giải gốc, có lời ca) + AI chỉ chạy khi "Chuyển sang Editor".
  */
 export async function openSheet(file: File, h: OpenSheetHandlers): Promise<ScoreDocument> {
   const invoke = tauriInvoke();
@@ -282,85 +346,59 @@ export async function openSheet(file: File, h: OpenSheetHandlers): Promise<Score
 
   // ---- 1. bản gốc hiện ngay
   const placeholder = createScore({ title, measures: 1, parts: [{ name: 'Đang nhận dạng…' }] });
-  placeholder.sheet = { kind, fileName: file.name, hash, pages, measures: [], mode: 'overlay', reviews: {}, pending: { done: 0, total: pages.length } };
+  const total = pages.length;
+  placeholder.sheet = { kind, fileName: file.name, hash, pages, measures: [], mode: 'overlay', reviews: {}, pending: { done: 0, total }, omrMode: 'fast' };
   setSheetAsset(placeholder.id, asset);
   h.onPlaceholder(placeholder);
+  const sheetBase = { kind, fileName: file.name, hash, pages, omrMode: 'fast' as const };
+  const build = (xs: (string | null)[], sx: string[], done: number, final: boolean) =>
+    buildSheetScore(xs, sx, { id: placeholder.id, title, sheet: { ...sheetBase, pending: final ? undefined : { done, total } } });
 
-  const build = (xmls: (string | null)[], sheetXmls: string[], done: number, final: boolean): ScoreDocument | null => {
-    const parts = xmls.map((x) => (x ? importMusicXml(x) : null));
-    const present = parts.map((p, i) => ({ p, i })).filter((x) => x.p && x.p.measures.length);
-    if (!present.length) return null;
-    const merged = present.length === 1 ? present[0]!.p! : concatScores(present.map((x) => x.p!), present.map((x) => hasExplicitTime(xmls[x.i]!)));
-    if (!merged) return null;
-    const geom = sheetXmls.some(Boolean) ? extractOmrGeometry(sheetXmls) : null;
-    const measures = geom && geom.length === merged.measures.length ? geom
-      : xmls.length === 1 && xmls[0] ? (extractSheetGeometry(xmls[0])?.measures ?? []) : [];
-    merged.id = placeholder.id;
-    if (!merged.meta.title || merged.meta.title === 'Untitled') merged.meta.title = title;
-    fixOmrInstruments(merged);
-    markAllUnverified(merged);
-    merged.sheet = { kind, fileName: file.name, hash, pages, measures, mode: 'overlay', reviews: {}, pending: final ? undefined : { done, total: pages.length } };
-    return merged;
-  };
-
-  const total = kind === 'pdf' ? pages.length : 1;
-  const inputPath = await writeOmrInput(file.name, bytes);
+  // ---- 3. từng trang: chuẩn bị (thu nhỏ) → Audiveris
   const xmls: (string | null)[] = new Array(total).fill(null);
   const sheetXmls: string[] = new Array(total).fill('');
   const binaries: (Uint8Array | undefined)[] = new Array(total).fill(undefined);
+  const settled: boolean[] = new Array(total).fill(false);
   let finished = 0;
-  let shown = 0; // số trang đầu liên tiếp đã đưa lên
+  let shown = 0;
   let lastError = '';
-
-  if (total <= 1) {
-    const r = await runAudiverisFull(file.name, null, { inputPath, onProgress: h.onProgress });
-    xmls[0] = r.xml;
-    sheetXmls[0] = r.sheets.get(1) ?? '';
-    binaries[0] = r.binaries.get(1);
-    finished = 1;
-  } else {
-    // ---- 3. theo từng trang: trang 1 xong là phát được ngay. Mỗi tiến trình Audiveris đã tự dùng nhiều nhân và
-    // tốn vài giây khởi động Java (đo trên máy 2 nhân: 2 trang song song 28 s, cả file 21 s, một trang ~12 s),
-    // nên chỉ chạy song song khi máy đủ mạnh (≥ 8 nhân; mỗi tiến trình ~1 GB RAM).
-    const cores = navigator.hardwareConcurrency || 4;
-    const workers = Math.max(1, Math.min(total, 4, Math.floor(cores / 4)));
-    const settled: boolean[] = new Array(total).fill(false);
-    let next = 0;
-    const worker = async (): Promise<void> => {
-      while (next < total) {
-        const k = next++;
-        try {
-          const r = await runAudiverisFull(file.name, null, { inputPath, job: `p${k + 1}`, sheets: String(k + 1), onProgress: k === 0 ? h.onProgress : undefined });
-          xmls[k] = r.xml;
-          sheetXmls[k] = r.sheets.get(k + 1) ?? '';
-          binaries[k] = r.binaries.get(k + 1);
-        } catch (e) {
-          lastError = String((e as Error).message ?? e); // trang không có nhạc (bìa, lời): bỏ qua
-        }
-        settled[k] = true;
-        finished++;
-        if (finished === total) continue;
-        // các trang đầu liên tiếp đã xong → đưa lên để phát được ngay
-        let prefix = 0;
-        while (prefix < total && settled[prefix]) prefix++;
-        if (prefix > shown) {
-          const part = build(xmls.slice(0, prefix), sheetXmls.slice(0, prefix), finished, false);
-          if (part) {
-            shown = prefix;
-            h.onUpdate(part);
-            continue;
-          }
-        }
-        if (!shown) h.onUpdate({ ...placeholder, sheet: { ...placeholder.sheet!, pending: { done: finished, total } } });
+  const cores = navigator.hardwareConcurrency || 4;
+  const workers = Math.max(1, Math.min(total, 4, Math.floor(cores / 4)));
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < total) {
+      const k = next++;
+      try {
+        const pg = await preparePage(asset, k, file.name);
+        const r = await runAudiverisFull(pg.name, pg.bytes, { job: `p${k + 1}`, onProgress: k === 0 ? h.onProgress : undefined });
+        xmls[k] = r.xml;
+        sheetXmls[k] = r.sheets.get(1) ?? r.sheets.values().next().value ?? '';
+        binaries[k] = r.binaries.get(1) ?? r.binaries.values().next().value;
+      } catch (e) {
+        lastError = String((e as Error).message ?? e); // trang không có nhạc (bìa, lời): bỏ qua
       }
-    };
-    await Promise.all(Array.from({ length: workers }, () => worker()));
-  }
+      settled[k] = true;
+      finished++;
+      if (finished === total) continue;
+      let prefix = 0;
+      while (prefix < total && settled[prefix]) prefix++;
+      if (prefix > shown) {
+        const part = build(xmls.slice(0, prefix), sheetXmls.slice(0, prefix), finished, false);
+        if (part) {
+          shown = prefix;
+          h.onUpdate(part);
+          continue;
+        }
+      }
+      if (!shown) h.onUpdate({ ...placeholder, sheet: { ...placeholder.sheet!, pending: { done: finished, total } } });
+    }
+  };
+  await Promise.all(Array.from({ length: workers }, () => worker()));
 
   let result = build(xmls, sheetXmls, finished, true);
-  if (!result && total > 1) {
+  if (!result && total > 1 && xmls.some(Boolean)) {
     // các trang không ghép được (số bè khác nhau…) → nhận dạng cả file một lần
-    const r = await runAudiverisFull(file.name, null, { inputPath, job: 'all', onProgress: h.onProgress });
+    const r = await runAudiverisFull(file.name, bytes, { job: 'all', onProgress: h.onProgress });
     const all = [...r.sheets.keys()].sort((a, b) => a - b);
     result = build([r.xml], all.length ? all.map((k) => r.sheets.get(k)!) : [''], 1, true);
     all.forEach((k, i) => (binaries[i] = r.binaries.get(k)));
@@ -449,7 +487,7 @@ export async function detectHardRegions(sheets: string[], binaries: (Uint8Array 
 // ------------------------------------------------------------------ Chuyển sang Edit
 
 export interface ConvertProgress {
-  phase: 'charge' | 'validate' | 'region' | 'done';
+  phase: 'charge' | 'full' | 'validate' | 'region' | 'ai' | 'done';
   done: number;
   total: number;
   text: string;
@@ -460,10 +498,17 @@ export interface ConvertResult {
   fixed: number;
   regionsTried: number;
   regionsImproved: number;
+  aiTried: number;
+  aiImproved: number;
+  /** Lý do bỏ qua AI (chưa cấu hình, hết lượt…) */
+  aiNote: string;
 }
 
 /** Số ô nhịp/ hệ thống tối đa nhận dạng lại trong một lần chuyển (mỗi vùng mất ~15–40 giây) */
 const MAX_REGIONS = 12;
+
+/** Gọi AI đọc lại một dòng nhạc (máy chủ). Trả về null nếu AI chưa bật / lỗi — khi đó bỏ qua bước AI. */
+export type AiRegionCall = (req: { image_png_base64: string; musicxml: string; measures: number[]; context: Record<string, unknown> }) => Promise<{ musicxml: string; model: string } | null>;
 
 export async function convertToEdit(
   score: ScoreDocument,
@@ -471,6 +516,7 @@ export async function convertToEdit(
   charge: () => Promise<{ credits: number; transaction_id: number | null; created_at: string }>,
   onProgress: (p: ConvertProgress) => void,
   isCancelled: () => boolean,
+  ai?: AiRegionCall,
 ): Promise<ConvertResult> {
   const sheet = score.sheet;
   if (!sheet) throw new Error('Bản nhạc này không mở từ ảnh/PDF');
@@ -479,6 +525,23 @@ export async function convertToEdit(
   // 1. trừ credit (máy chủ, idempotent theo file gốc)
   onProgress({ phase: 'charge', done: 0, total: 1, text: 'Xác nhận 10 credit với máy chủ…' });
   const conv: NonNullable<SheetSource['conversion']> = sheet.conversion ?? (await charge().then((c) => ({ at: c.created_at, credits: c.credits, transactionId: c.transaction_id ?? undefined })));
+
+  // 1b. NHẬN DẠNG KỸ: Player chỉ dùng bản nhanh (ảnh thu nhỏ); Editor chạy lại ở độ phân giải gốc, có lời ca
+  if (sheet.omrMode !== 'full' && asset && tauriInvoke() && !isCancelled()) {
+    onProgress({ phase: 'full', done: 0, total: 1, text: 'Nhận dạng kỹ ở độ phân giải gốc (có lời ca)…' });
+    try {
+      const r = await runAudiverisFull(sheet.fileName, asset.bytes, { job: 'full' });
+      const keys = [...r.sheets.keys()].sort((a, b) => a - b);
+      const sx = keys.map((k) => r.sheets.get(k)!);
+      const full = buildSheetScore([r.xml], sx.length ? sx : [''], { id: score.id, title: score.meta.title, sheet: { kind: sheet.kind, fileName: sheet.fileName, hash: sheet.hash, pages: sheet.pages, omrMode: 'full' } });
+      if (full) {
+        if (full.sheet!.measures.length) full.sheet!.signals = await detectHardRegions(sx, keys.map((k) => r.binaries.get(k)), full.sheet!.measures).catch(() => []);
+        exec(replaceRecognition(full));
+      }
+    } catch {
+      /* nhận dạng kỹ thất bại: dùng tiếp kết quả nhanh, vẫn kiểm tra + nhận dạng lại theo vùng */
+    }
+  }
 
   // 2. Music Rule Validator + tự sửa an toàn
   onProgress({ phase: 'validate', done: 0, total: 1, text: 'Kiểm tra quy tắc âm nhạc…' });
@@ -491,7 +554,7 @@ export async function convertToEdit(
   const hard = [...difficulty(issues.filter((i) => !i.special))].filter(([, d]) => d >= 3).map(([mi]) => mi);
   const systems = new Map<number, number[]>();
   for (const mi of hard) {
-    const g = sheet.measures.find((x) => x.measureIndex === mi);
+    const g = score.sheet!.measures.find((x) => x.measureIndex === mi);
     if (g) systems.set(g.system, [...(systems.get(g.system) ?? []), mi]);
   }
   let tried = 0;
@@ -505,13 +568,57 @@ export async function convertToEdit(
       if (await rerecognizeSystem(score, sys, targets, exec)) improved++;
     }
   }
-  void issues;
+
+  // 3b. AI đọc lại các dòng VẪN còn lỗi sau Audiveris (ảnh dòng nhạc + MusicXML → MusicXML đã sửa, chỉ nhận khi ít lỗi hơn)
+  let aiTried = 0;
+  let aiImproved = 0;
+  let aiNote = '';
+  const sh = score.sheet!;
+  if (ai && asset && !isCancelled()) {
+    const still = [...systems].filter(([, t]) => validateMusic(score, { measures: t }).some((i) => i.severity === 'error')).slice(0, MAX_REGIONS);
+    for (const [sys, targets] of still) {
+      if (isCancelled()) break;
+      const sysGeoms = sh.measures.filter((x) => x.system === sys).sort((a, b) => a.measureIndex - b.measureIndex);
+      const box = regionOf(sysGeoms);
+      if (!box) continue;
+      aiTried++;
+      onProgress({ phase: 'ai', done: aiTried - 1, total: still.length, text: `AI đọc lại dòng ${sys + 1}…` });
+      const order = sysGeoms.map((g) => g.measureIndex);
+      const png = await cropPng(asset, box, REGION_CONFIGS[0]!);
+      const ts = timeSigAt(score, order[0]!);
+      const res = await ai({
+        image_png_base64: toBase64(png),
+        musicxml: exportMusicXml(sliceScore(score, order)),
+        measures: targets.map((t) => order.indexOf(t) + 1),
+        context: { key: keyAt(score, order[0]!), time: `${ts.beats}/${ts.beatType}`, parts: score.parts.map((p) => p.name) },
+      }).catch((e: Error) => {
+        aiNote = String(e.message ?? e);
+        return null;
+      });
+      if (!res) break; // AI chưa bật hoặc lỗi: dừng bước AI
+      try {
+        const src = importMusicXml(res.musicxml);
+        const before = validateMusic(score, { measures: targets }).filter((i) => i.severity === 'error').length;
+        const trial: ScoreDocument = JSON.parse(JSON.stringify(score));
+        const cmd = replaceMeasuresFrom(trial, src, order, targets, `ai:${res.model}`);
+        if (!cmd) continue;
+        cmd.apply(trial);
+        const after = validateMusic(trial, { measures: targets }).filter((i) => i.severity === 'error').length;
+        if (after < before) {
+          exec(replaceMeasuresFrom(score, src, order, targets, `ai:${res.model}`)!);
+          aiImproved++;
+        }
+      } catch {
+        /* AI trả MusicXML không dùng được: giữ kết quả cũ */
+      }
+    }
+  }
 
   // 4. dựng khuông nhạc đầy đủ + đánh dấu các ô cần đối chiếu
   issues = reviewIssues(score);
   exec(enterEditMode(conv, issues));
   onProgress({ phase: 'done', done: work.length, total: work.length, text: 'Xong' });
-  return { issues, fixed: safe.length, regionsTried: tried, regionsImproved: improved };
+  return { issues, fixed: safe.length, regionsTried: tried, regionsImproved: improved, aiTried, aiImproved, aiNote };
 }
 
 /**
@@ -564,4 +671,10 @@ export async function rerecognizeSystem(
 export function measureBox(score: ScoreDocument, mi: number): SheetBox | null {
   const g = score.sheet?.measures.find((x) => x.measureIndex === mi);
   return g ? regionOf([g], 0.01) : null;
+}
+
+function toBase64(b: Uint8Array): string {
+  let bin = '';
+  for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode(...b.subarray(i, i + 0x8000));
+  return btoa(bin);
 }

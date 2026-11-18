@@ -4,8 +4,8 @@
  */
 import { create } from 'zustand';
 import {
-  analyzeComposition, buildTimeline, CommandHistory, createScore, dismissSuggestion, restoreDismissed, setRuleEnabled,
-  type AdvisorRule, type AdvisorSuggestion, type ChordSymbol, type Command, type PlaybackTimeline, type ScoreDocument,
+  accompany, analyzeComposition, buildTimeline, chordsForAccompaniment, CommandHistory, DEFAULT_PLAYER_SETTINGS, type PlayerSettings, createScore, dismissSuggestion, restoreDismissed, setRuleEnabled,
+  type AdvisorRule, type AdvisorSuggestion, type ChordSymbol, type Command, type Duration, type PlaybackTimeline, type ScoreDocument,
 } from '@holy-melody/music-core';
 
 export type MainTab = 'player' | 'editor' | 'singer';
@@ -48,6 +48,14 @@ interface State {
   timeline: PlaybackTimeline | null;
   advisor: { enabled: boolean; suggestions: AdvisorSuggestion[]; hymnMode: boolean };
   theme: Theme;
+  /** Editor: bấm lên khuông để đặt nốt (chế độ nhập nốt) và trường độ đang chọn */
+  noteInput: boolean;
+  inputDuration: Duration;
+  setNoteInput(on: boolean): void;
+  setInputDuration(d: Duration): void;
+  /** Cài đặt phát của Player (nhạc cụ, âm lượng, đệm hợp âm, dịch giọng, dạo đầu, đếm vào) */
+  player: PlayerSettings;
+  setPlayer(patch: Partial<PlayerSettings>): void;
   reducedMotion: boolean;
   layout: LayoutPrefs;
   paletteOpen: boolean;
@@ -81,16 +89,16 @@ interface State {
 }
 
 const PREFS_KEY = 'holy-melody:prefs';
-function loadPrefs(): Partial<Pick<State, 'theme' | 'reducedMotion' | 'layout'>> {
+function loadPrefs(): Partial<Pick<State, 'theme' | 'reducedMotion' | 'layout' | 'player'>> {
   try {
     return JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}');
   } catch {
     return {};
   }
 }
-function savePrefs(s: Pick<State, 'theme' | 'reducedMotion' | 'layout'>) {
+function savePrefs(s: Pick<State, 'theme' | 'reducedMotion' | 'layout' | 'player'>) {
   try {
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ theme: s.theme, reducedMotion: s.reducedMotion, layout: s.layout }));
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ theme: s.theme, themeChosen: true, reducedMotion: s.reducedMotion, layout: s.layout, player: s.player }));
   } catch {
     /* storage không khả dụng: bỏ qua */
   }
@@ -102,13 +110,26 @@ export const useStore = create<State>((set, get) => {
   const prefs = loadPrefs();
 
   /** Gọi sau mọi thay đổi score: dựng lại timeline, lên lịch phân tích gợi ý (không chặn UI) */
+  let playerTimer: ReturnType<typeof setTimeout> | undefined;
+  const chordCache = new WeakMap<ScoreDocument, { rev: number; list: ChordSymbol[] }>();
   const refresh = () => {
     const p = active();
     if (!p) {
       set({ timeline: null, advisor: { ...get().advisor, suggestions: [] } });
       return;
     }
-    set({ revision: p.score.revision, timeline: buildTimeline(p.score) });
+    const base = buildTimeline(p.score);
+    // Player: đệm hợp âm + dạo đầu + đếm vào + nhạc cụ/âm lượng/dịch giọng (không sửa bản nhạc). Editor: phát trơn.
+    let timeline = base;
+    if (get().tab === 'player') {
+      let chords = chordCache.get(p.score);
+      if (!chords || chords.rev !== p.score.revision) {
+        chords = { rev: p.score.revision, list: chordsForAccompaniment(p.score) };
+        chordCache.set(p.score, chords);
+      }
+      timeline = accompany(p.score, base, get().player, chords.list);
+    }
+    set({ revision: p.score.revision, timeline });
     if (advisorTimer) clearTimeout(advisorTimer);
     advisorTimer = setTimeout(() => {
       const cur = active();
@@ -127,7 +148,24 @@ export const useStore = create<State>((set, get) => {
     revision: 0,
     timeline: null,
     advisor: { enabled: true, suggestions: [], hymnMode: true },
-    theme: prefs.theme ?? 'system',
+    // mặc định giao diện sáng; chỉ theo lựa chọn đã lưu khi người dùng tự chọn (bản cũ lưu 'system' tự động)
+    theme: (prefs as { themeChosen?: boolean }).themeChosen && prefs.theme ? prefs.theme : 'light',
+    noteInput: true,
+    inputDuration: { type: 'quarter', dots: 0 },
+    setNoteInput(noteInput) {
+      set({ noteInput });
+    },
+    setInputDuration(inputDuration) {
+      set({ inputDuration });
+    },
+    player: { ...DEFAULT_PLAYER_SETTINGS, ...(prefs.player ?? {}) },
+    setPlayer(patch) {
+      set({ player: { ...get().player, ...patch } });
+      savePrefs(get());
+      // dựng lại timeline (gộp các lần kéo thanh trượt liên tiếp)
+      if (playerTimer) clearTimeout(playerTimer);
+      playerTimer = setTimeout(refresh, 120);
+    },
     reducedMotion: prefs.reducedMotion ?? false,
     layout: { leftOpen: true, rightOpen: true, leftWidth: 240, rightWidth: 320, zoom: 1, ...prefs.layout },
     paletteOpen: false,
@@ -174,8 +212,10 @@ export const useStore = create<State>((set, get) => {
       refresh();
     },
     setTab(tab) {
-      // Không sao chép dữ liệu khi chuyển tab: giữ nguyên selection và vị trí
+      // Không sao chép dữ liệu khi chuyển tab: giữ nguyên selection; timeline đổi (Player có đệm + mở đầu)
+      if (tab === get().tab) return;
       set({ tab });
+      refresh();
     },
     exec(cmd) {
       const p = active();

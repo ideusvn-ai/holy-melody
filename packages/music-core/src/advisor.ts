@@ -356,10 +356,12 @@ export function analyzeComposition(score: ScoreDocument, opts: AdvisorOptions = 
 
   // ================= 3. Cấu trúc thánh ca
   const lastIdx = score.measures.length - 1;
+  // bài còn đang soạn (giai điệu chưa tới 2 ô cuối, phía sau toàn dấu lặng): chưa nhắc các quy tắc kết bài
+  const finished = !!melody && melody.notes.length >= 4 && melody.notes[melody.notes.length - 1]!.measureIndex >= lastIdx - 1;
   if (melody && melody.notes.length) {
     const last = melody.notes[melody.notes.length - 1]!;
     const t = tonicPc(score, last.measureIndex);
-    if (mod(last.midi, 12) !== t) {
+    if (finished && mod(last.midi, 12) !== t) {
       add('structure.final-tonic', 'suggestion', `Giai điệu kết trên ${pitchName(last.pitch)}, chưa về chủ âm.`,
         'Bài thánh ca thường kết trọn trên bậc I (chủ âm) để tạo cảm giác hoàn tất, nghỉ yên — phù hợp lời "Amen" hay câu kết.',
         { part: melody.part, measureIndex: last.measureIndex, noteIds: [last.noteId] });
@@ -367,9 +369,16 @@ export function analyzeComposition(score: ScoreDocument, opts: AdvisorOptions = 
     if (hymn) {
       const lo = Math.min(...melody.notes.map((n) => n.midi));
       const hi = Math.max(...melody.notes.map((n) => n.midi));
-      if ((melody.role === 'melody' || melody.role === 'S') && (lo < CONGREGATION[0] - 2 || hi > CONGREGATION[1] + 2 || hi - lo > 14)) {
+      const tooLow = lo < CONGREGATION[0] - 2;
+      const tooHigh = hi > CONGREGATION[1] + 2;
+      const tooWide = hi - lo > 14;
+      if ((melody.role === 'melody' || melody.role === 'S') && melody.notes.length >= 4 && (tooLow || tooHigh || tooWide)) {
+        const loName = pitchName(melody.notes.find((n) => n.midi === lo)!.pitch);
+        const hiName = pitchName(melody.notes.find((n) => n.midi === hi)!.pitch);
         add('range.congregation', 'info',
-          `Giai điệu trải ${hi - lo} bán cung (${pitchName(melody.notes.find((n) => n.midi === lo)!.pitch)}–${pitchName(melody.notes.find((n) => n.midi === hi)!.pitch)}).`,
+          tooWide ? `Giai điệu trải rộng ${hi - lo} bán cung (${loName}–${hiName}), quá quãng 9–10 cộng đoàn hát thoải mái.`
+            : tooHigh ? `Nốt cao nhất ${hiName} vượt vùng hát thoải mái của cộng đoàn (Đô4–Rê5).`
+            : `Nốt thấp nhất ${loName} thấp hơn vùng hát thoải mái của cộng đoàn (Đô4–Rê5).`,
           'Cộng đoàn hát thoải mái nhất trong khoảng Đô4–Rê5 (tối đa khoảng quãng 9–10). Có thể chuyển giọng để đưa giai điệu vào vùng này.',
           { part: melody.part });
       }
@@ -422,7 +431,7 @@ export function analyzeComposition(score: ScoreDocument, opts: AdvisorOptions = 
       }
     }
   }
-  if (bass && bass.notes.length) {
+  if (finished && bass && bass.notes.length) {
     const last = bass.notes[bass.notes.length - 1]!;
     if (mod(last.midi, 12) !== tonicPc(score, last.measureIndex)) {
       add('structure.final-bass', 'suggestion', `Bè trầm kết trên ${pitchName(last.pitch)}, chưa về chủ âm.`,
@@ -430,7 +439,7 @@ export function analyzeComposition(score: ScoreDocument, opts: AdvisorOptions = 
         { part: bass.part, measureIndex: last.measureIndex, noteIds: [last.noteId] });
     }
   }
-  if (lastIdx >= 0 && score.measures[lastIdx]!.barlineRight !== 'final' && !score.measures[lastIdx]!.repeatEnd) {
+  if (finished && lastIdx >= 0 && score.measures[lastIdx]!.barlineRight !== 'final' && !score.measures[lastIdx]!.repeatEnd) {
     add('structure.final-barline', 'info', 'Ô cuối chưa có vạch kết bài.', 'Vạch kép kết (mảnh–đậm) báo hiệu kết thúc tác phẩm.',
       { measureIndex: lastIdx });
   }

@@ -119,3 +119,22 @@ test('ghép kết quả các trang nhận dạng song song', () => {
 });
 
 void existsSync;
+
+test('cắt một dòng nhạc để gửi AI; thay kết quả nhận dạng kỹ giữ id/tiêu đề', async () => {
+  const { sliceScore, replaceRecognition, exportMusicXml } = await import('../src/index.ts');
+  const s = importMusicXml(readFileSync(fx('audiveris-hymn.musicxml'), 'utf8'));
+  const sub = sliceScore(s, [6, 7, 8]);
+  assert.equal(sub.measures.length, 3);
+  assert.equal(sub.parts.length, s.parts.length);
+  const back = importMusicXml(exportMusicXml(sub));
+  assert.equal(back.measures.length, 3);
+  const t = importMusicXml(readFileSync(fx('audiveris-hymn.musicxml'), 'utf8'));
+  t.meta.title = 'Bài của tôi';
+  t.sheet = { kind: 'image', fileName: 'a.png', hash: 'x', pages: [], measures: [], mode: 'overlay', reviews: {}, omrMode: 'fast' };
+  const id = t.id;
+  const full = importMusicXml(readFileSync(fx('audiveris-hymn.musicxml'), 'utf8'));
+  replaceRecognition(full).apply(t);
+  assert.equal(t.id, id);
+  assert.equal(t.meta.title, 'Bài của tôi');
+  assert.equal(t.sheet?.omrMode, 'full');
+});

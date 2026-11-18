@@ -43,12 +43,27 @@ export function paginate(score: ScoreDocument, layout: ScoreLayout, pageHeightPx
   return pages;
 }
 
+// Font Bravura nhúng vào SVG/PNG xuất ra (file đứng riêng, không đọc được font của ứng dụng)
+let smuflCss = '';
+if (typeof fetch === 'function' && typeof location !== 'undefined') {
+  void fetch('/fonts/Bravura.woff2')
+    .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject()))
+    .then((b) => {
+      let bin = '';
+      const u = new Uint8Array(b);
+      for (let i = 0; i < u.length; i += 0x8000) bin += String.fromCharCode(...u.subarray(i, i + 0x8000));
+      smuflCss = `@font-face{font-family:Bravura;src:url(data:font/woff2;base64,${btoa(bin)}) format("woff2")}`;
+    })
+    .catch(() => undefined);
+}
+
 function svgDoc(inner: string, w: number, h: number, viewBox: string, pageNo?: { n: number; total: number; show: boolean }) {
   const num = pageNo && pageNo.show && pageNo.total > 1
     ? `<text x="${w / 2}" y="${h - 18}" font-size="11" text-anchor="middle" fill="#555" font-family="Georgia, serif">${pageNo.n}</text>`
     : '';
   const [vx, vy, vw, vh] = viewBox.split(' ').map(Number);
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="color:#1d1c1a;background:#fff">`
+    + (smuflCss ? `<defs><style>${smuflCss}</style></defs>` : '')
     + `<rect width="${w}" height="${h}" fill="#fff"/>`
     + `<svg x="0" y="0" width="${w}" height="${h}" viewBox="${vx} ${vy} ${vw} ${vh}" overflow="hidden">${inner}</svg>`
     + num + '</svg>';
@@ -56,6 +71,9 @@ function svgDoc(inner: string, w: number, h: number, viewBox: string, pageNo?: {
 
 function bodyMarkup(score: ScoreDocument, layout: ScoreLayout): string {
   return renderToStaticMarkup(<ScoreSvgBody layout={layout} score={score} />)
+    // biến CSS không có tác dụng trong file SVG đứng riêng
+    .replace(/var\(--font-smufl\)/g, 'Bravura, serif')
+    .replace(/var\(--font-music\)/g, "'Bravura Text', 'Noto Music', serif")
     // nền chọn ô nhịp không cần khi in
     .replace(/<rect class="hm-measure-bg[^"]*"[^>]*\/>/g, '');
 }

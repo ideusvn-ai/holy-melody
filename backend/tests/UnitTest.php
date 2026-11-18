@@ -161,3 +161,11 @@ T::test('AI: loại tác vụ chưa bật bị từ chối trước khi chạm C
     ok(!$svc->isEnabled('singer'));
     throwsCode(fn () => $svc->create(1, 'singer', 'x', [], 'idem-12345678'), 'AI_UNAVAILABLE');
 });
+
+T::test('AI OMR: lấy khối MusicXML hợp lệ từ câu trả lời của mô hình', function () {
+    $ok = "Đây là kết quả:\n```xml\n<score-partwise version=\"4.0\"><part-list/></score-partwise>\n```";
+    $x = \HolyMelody\Omr\OmrAiService::extractScore($ok);
+    if ($x === null || !str_contains($x, '<score-partwise')) throw new RuntimeException('không lấy được MusicXML');
+    if (\HolyMelody\Omr\OmrAiService::extractScore('xin lỗi, tôi không đọc được') !== null) throw new RuntimeException('phải trả null');
+    if (\HolyMelody\Omr\OmrAiService::extractScore('<score-partwise><part></score-partwise>') !== null) throw new RuntimeException('XML hỏng phải trả null');
+});

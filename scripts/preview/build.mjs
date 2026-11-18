@@ -50,5 +50,6 @@ writeFileSync(join(out, 'app.css'), tw.build([...candidates]));
 mkdirSync(join(out, 'pdfjs-dist/build'), { recursive: true });
 writeFileSync(join(out, 'pdfjs-dist/build/pdf.worker.min.mjs'), readFileSync('/opt/npm-tools/node_modules/pdfjs-dist/build/pdf.worker.min.mjs'));
 for (const d of ['wasm', 'standard_fonts', 'cmaps', 'iccs']) cpSync(join('/opt/npm-tools/node_modules/pdfjs-dist', d), join(out, 'pdfjs', d), { recursive: true });
+cpSync(join(here, '../../apps/desktop/public'), out, { recursive: true });
 writeFileSync(join(out, 'index.html'), `<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Holy Melody</title><link rel="stylesheet" href="app.css"></head><body><div id="root"></div><script type="module" src="app.js"></script></body></html>`);
 console.log('preview built →', out);

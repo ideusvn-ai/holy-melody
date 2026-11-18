@@ -8,11 +8,12 @@ import { AccountMenu } from './components/AccountMenu';
 import { listRecoverable, markClean, recover, startAutosave, type Recoverable } from './lib/autosave';
 import { verifyMeasures } from '@holy-melody/music-core';
 import { exportMxlFile, exportPngFile, exportSvgFile, exportWavFile, printScore } from './lib/exporters';
-import { PlayerCenter, PlayerLeft, PlayerRight } from './views/PlayerView';
+import { PlayerCenter, PlayerLeft } from './views/PlayerView';
 import { EditorCenter, EditorLeft, EditorRight } from './views/EditorView';
 import { SingerCenter } from './views/SingerView';
 import { Transport } from './components/Transport';
 import { Welcome } from './components/Welcome';
+import { useAccount } from './state/account';
 import {
   IconExport, IconImport, IconLogo, IconMoon, IconNew, IconOpen, IconPanelLeft, IconPanelRight, IconRedo,
   IconSave, IconSearch, IconSettings, IconSun, IconUndo, IconX, IconZoomIn, IconZoomOut,
@@ -69,6 +70,9 @@ export function App() {
       try {
         const r = await importFile(f);
         st.newProject(r.score, f.name);
+        // dự án đang soạn (.holymelody, không phải bản ảnh/PDF chưa chuyển) → vào thẳng Editor, không cần đăng nhập
+        if (kind === 'project' && r.score.sheet?.mode !== 'overlay') st.setTab('editor');
+        else st.setTab('player');
         for (const w of r.warnings) st.notify(w);
         if (r.score.provenance.source !== 'new') st.notify(`Đã mở ${f.name}`);
       } catch (e) {
@@ -116,15 +120,13 @@ export function App() {
     { id: 'xml', label: 'Export MusicXML', run: () => project && void exportMusicXmlFile(project.score) },
     { id: 'midi', label: 'Export MIDI', run: () => project && void exportMidiFile(project.score) },
     { id: 'mxl', label: 'Export MXL (MusicXML nén)', run: () => project && void exportMxlFile(project.score) },
-    { id: 'pdf', label: 'In / Lưu PDF', hint: '⌘P', run: () => project && void printScore(project.score) },
+    { id: 'pdf', label: 'In / Lưu PDF', hint: '⌘P', run: () => project && void printPdfGated(project.score) },
     { id: 'png', label: 'Export PNG', run: () => project && void exportPngFile(project.score, 0) },
     { id: 'wav', label: 'Export WAV', run: () => project && void exportWavFile(project.score, project.score.playback.mixer).catch((e) => st.notify(String(e.message ?? e), 'error')) },
     { id: 'undo', label: 'Hoàn tác', hint: '⌘Z', run: () => st.undo() },
     { id: 'redo', label: 'Làm lại', hint: '⇧⌘Z', run: () => st.redo() },
     { id: 'play', label: 'Phát / Tạm dừng', hint: 'Space', run: () => usePlayback.getState().toggle() },
     { id: 'tab1', label: 'Chuyển tới Player', hint: '⌘1', run: () => st.setTab('player') },
-    { id: 'tab2', label: 'Chuyển tới Score Editor', hint: '⌘2', run: () => st.setTab('editor') },
-    { id: 'tab3', label: 'Chuyển tới AI Singer', hint: '⌘3', run: () => st.setTab('singer') },
     { id: 'left', label: 'Ẩn/hiện thanh trái', run: () => st.setLayout({ leftOpen: !st.layout.leftOpen }) },
     { id: 'right', label: 'Ẩn/hiện thanh phải', run: () => st.setLayout({ rightOpen: !st.layout.rightOpen }) },
     { id: 'theme', label: 'Đổi giao diện sáng/tối', run: () => st.setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark') },
@@ -145,8 +147,8 @@ export function App() {
       if (mod && k === 's') { e.preventDefault(); void save(); return; }
       if (mod && k === 'o') { e.preventDefault(); fileInput.current?.click(); return; }
       if (mod && k === 'n') { e.preventDefault(); newBlank(); return; }
-      if (mod && k === 'p' && project) { e.preventDefault(); void printScore(project.score); return; }
-      if (mod && ['1', '2', '3'].includes(k)) { e.preventDefault(); st.setTab(TABS[Number(k) - 1]!.id); return; }
+      if (mod && k === 'p' && project) { e.preventDefault(); void printPdfGated(project.score); return; }
+      if (mod && k === '1') { e.preventDefault(); st.setTab('player'); return; }
       if (inField) return;
       if (k === ' ') { e.preventDefault(); usePlayback.getState().toggle(); return; }
       if (k === 'escape') { st.clearSelection(); st.setPalette(false); return; }
@@ -161,7 +163,7 @@ export function App() {
   const dirty = project ? project.score.revision !== project.savedRevision : false;
   const center: Record<MainTab, ReactNode> = { player: <PlayerCenter />, editor: <EditorCenter />, singer: <SingerCenter /> };
   const left: Record<MainTab, ReactNode> = { player: <PlayerLeft />, editor: <EditorLeft />, singer: null };
-  const right: Record<MainTab, ReactNode> = { player: <PlayerRight />, editor: <EditorRight />, singer: null };
+  const right: Record<MainTab, ReactNode> = { player: null, editor: <EditorRight />, singer: null };
   const ib = 'h-8 w-8 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-surface-2 active:scale-95 transition disabled:opacity-35';
 
   return (
@@ -204,18 +206,13 @@ export function App() {
 
       {/* ---------------- tabs */}
       <nav className="h-10 flex items-end gap-1 px-3 border-b border-line bg-surface" role="tablist">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            role="tab"
-            aria-selected={st.tab === t.id}
-            className={`relative h-9 px-4 text-[12px] font-semibold tracking-wider transition ${st.tab === t.id ? 'text-fg' : 'text-muted hover:text-fg'}`}
-            onClick={() => st.setTab(t.id)}
-          >
-            {t.label}
-            {st.tab === t.id && <span className="absolute left-2 right-2 -bottom-px h-0.5 bg-accent rounded-full" />}
+        {/* chỉ còn Player; Editor vào bằng "Chuyển sang Editor" (đăng nhập) / Tạo mới / mở dự án; AI Singer mở từ Editor */}
+        <span className="h-9 px-3 flex items-center text-[12px] font-semibold tracking-wider">{TABS.find((t) => t.id === st.tab)?.label}</span>
+        {st.tab !== 'player' && project && (
+          <button className="mb-1 h-7 px-3 rounded-md text-[12px] border border-line hover:bg-surface-2" onClick={() => st.setTab(st.tab === 'singer' ? 'editor' : 'player')}>
+            ← {st.tab === 'singer' ? 'Score Editor' : 'Player'}
           </button>
-        ))}
+        )}
         <div className="flex-1" />
         <div className="flex items-center gap-1 pb-1 overflow-x-auto max-w-[50%]">
           {st.projects.map((p) => (
@@ -290,6 +287,23 @@ export function App() {
   );
 }
 
+/** Xuất PDF cần đăng nhập (soạn và lưu dự án thì không cần) */
+async function printPdfGated(score: Parameters<typeof printScore>[0]) {
+  const acc = useAccount.getState();
+  const notify = useStore.getState().notify;
+  if (!acc.user) {
+    if (acc.configured === false) return notify(acc.reason ?? 'Chưa cấu hình tài khoản: không đăng nhập được.', 'error');
+    notify('Xuất PDF cần đăng nhập. Đang mở trang đăng nhập…');
+    try {
+      await acc.login();
+    } catch (e) {
+      return notify(String((e as Error).message ?? e), 'error');
+    }
+    if (!useAccount.getState().user) return;
+  }
+  await printScore(score);
+}
+
 function ExportMenu() {
   const project = useActiveProject();
   const [open, setOpen] = useState(false);
@@ -304,7 +318,7 @@ function ExportMenu() {
           <button className={item} onClick={() => { void exportMidiFile(project.score); setOpen(false); }}>MIDI (.mid)</button>
           <button className={item} onClick={() => { void exportMxlFile(project.score); setOpen(false); }}>MusicXML nén (.mxl)</button>
           <div className="my-1 border-t border-line" />
-          <button className={item} onClick={() => { void printScore(project.score); setOpen(false); }}>In / Lưu PDF… <span className="text-muted">(⌘P)</span></button>
+          <button className={item} onClick={() => { void printPdfGated(project.score); setOpen(false); }}>In / Lưu PDF… <span className="text-muted">(⌘P, cần đăng nhập)</span></button>
           <button className={item} onClick={() => { void exportSvgFile(project.score, 0).catch((e) => notify(String(e.message ?? e), 'error')); setOpen(false); }}>SVG (trang 1)</button>
           <button className={item} onClick={() => { void exportPngFile(project.score, 0).catch((e) => notify(String(e.message ?? e), 'error')); setOpen(false); }}>PNG 300 dpi (trang 1)</button>
           <div className="my-1 border-t border-line" />

@@ -35,6 +35,11 @@ interface PlaybackState {
 }
 
 let engine: PlaybackEngine = new WebAudioEngine();
+let lastSelKey = '';
+/** Phát từ một tick cụ thể (bấm đầu nốt trên bản gốc ảnh/PDF) và ghi nhớ để Play không nhảy lại */
+export function markSelectionPlayed(noteIds: string[]) {
+  lastSelKey = noteIds.join(',');
+}
 
 export const usePlayback = create<PlaybackState>((set, get) => ({
   engine,
@@ -65,8 +70,23 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
     set({ status: engine.status() });
   },
   toggle() {
-    if (engine.status() === 'playing') get().pause();
-    else void get().play();
+    if (engine.status() === 'playing') {
+      get().pause();
+      return;
+    }
+    // vừa chọn nốt mới → phát ngay từ nốt đó; không thì phát tiếp từ vị trí hiện tại
+    const st = useStore.getState();
+    const ids = st.selection.noteIds;
+    const key = ids.join(',');
+    if (ids.length && key !== lastSelKey && st.timeline) {
+      lastSelKey = key;
+      const spans = st.timeline.spans.filter((x) => ids.includes(x.noteId));
+      if (spans.length) {
+        void get().play(Math.min(...spans.map((x) => x.startTick)));
+        return;
+      }
+    }
+    void get().play();
   },
   seek(tick) {
     engine.seek(tick);
@@ -134,8 +154,8 @@ function applyLoop() {
 
 function reload(tl: PlaybackTimeline | null) {
   if (!tl) return;
-  const t = usePlayback.getState().transpose;
-  engine.load(t ? { ...tl, notes: tl.notes.map((n) => ({ ...n, pitch: Math.max(0, Math.min(127, n.pitch + t)) })) } : tl);
+  // dịch giọng, nhạc cụ, đệm, dạo đầu, đếm vào đã nằm sẵn trong timeline (store.player)
+  engine.load(tl);
 }
 
 // Đồng bộ: timeline mới (chỉnh sửa ở bất kỳ tab nào) → nạp lại engine, giữ vị trí

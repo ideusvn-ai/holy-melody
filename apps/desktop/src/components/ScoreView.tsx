@@ -3,10 +3,11 @@
  * Highlight thao tác trực tiếp trên DOM qua id ổn định (không re-render React mỗi frame).
  */
 import { useEffect, useMemo, useRef, useState, type MouseEvent as RMouseEvent } from 'react';
-import { HighlightIndex, measureAtTick } from '@holy-melody/music-core';
+import { durationTicks, HighlightIndex, keyFifthsAt, measureAtTick, measureTicks, pitchFromStaffStep, pitchToMidi, placeNote, setLyricStyle, type Pitch } from '@holy-melody/music-core';
 import { layoutScore, type EventBox, type ScoreLayout } from '@holy-melody/score-renderer';
 import type { ScoreDocument } from '@holy-melody/music-core';
 import { useActiveProject, useStore } from '../state/store';
+import { CountIn } from './CountIn';
 import { playbackPosition, usePlayback } from '../state/playback';
 
 interface Props {
@@ -16,7 +17,6 @@ interface Props {
   flaggedNoteIds?: string[];
 }
 
-const DUR_FLAGS: Record<string, number> = { eighth: 1, '16th': 2, '32nd': 3, '64th': 4 };
 
 export function ScoreView({ editable = false, flaggedNoteIds = [] }: Props) {
   const project = useActiveProject();
@@ -34,6 +34,10 @@ export function ScoreView({ editable = false, flaggedNoteIds = [] }: Props) {
   const cursorRef = useRef<SVGRectElement>(null);
   const [width, setWidth] = useState(900);
   const dragStart = useRef<number | null>(null);
+  const noteInput = useStore((s) => s.noteInput);
+  const inputDuration = useStore((s) => s.inputDuration);
+  const [lyricDrag, setLyricDrag] = useState<{ y: number; dy: number } | null>(null);
+  const [ghost, setGhost] = useState<{ x: number; y: number; staffY: number; steps: number; pitch: Pitch } | null>(null);
 
   useEffect(() => {
     const el = hostRef.current;
@@ -99,16 +103,18 @@ export function ScoreView({ editable = false, flaggedNoteIds = [] }: Props) {
   }
   const { sp } = layout;
   const staffH = sp * 4;
-  const selNotes = new Set(selection.noteIds);
+  const selNotes = new Set([...selection.noteIds, ...selection.eventIds]); // gồm cả dấu lặng đang chọn
   const flagged = new Set(flaggedNoteIds);
   const [selFrom, selTo] = selection.measureRange ?? [-1, -2];
 
   const onNoteClick = (e: RMouseEvent, noteId: string, eventId: string) => {
     e.stopPropagation();
+    // bấm vào dấu lặng (noteId rỗng) khi đang nhập nốt: đặt nốt ngay tại đó
+    if (!noteId && onInputClick(e)) return;
     if (e.shiftKey || e.metaKey || e.ctrlKey) {
-      select({ noteIds: [...new Set([...selection.noteIds, noteId])], eventIds: [...new Set([...selection.eventIds, eventId])], measureRange: undefined });
+      select({ noteIds: [...new Set([...selection.noteIds, ...(noteId ? [noteId] : [])])], eventIds: [...new Set([...selection.eventIds, eventId])], measureRange: undefined });
     } else {
-      select({ noteIds: [noteId], eventIds: [eventId], measureRange: undefined });
+      select({ noteIds: noteId ? [noteId] : [], eventIds: [eventId], measureRange: undefined });
     }
     if (!editable && e.detail === 2 && hiIndex) {
       const t = hiIndex.firstTickOf(noteId);
@@ -116,7 +122,111 @@ export function ScoreView({ editable = false, flaggedNoteIds = [] }: Props) {
     }
   };
 
+  // ---- nhập nốt: bấm lên khuông → đặt nốt (ghi đè dấu lặng), nốt mờ chạy theo chuột
+  const inputOn = editable && noteInput;
+  const locate = (clientX: number, clientY: number) => {
+    const svg = svgRef.current;
+    const ctm = svg?.getScreenCTM();
+    if (!svg || !ctm) return null;
+    const pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = clientY;
+    const p = pt.matrixTransform(ctm.inverse());
+    let best: { st: (typeof layout.systems)[number]['staves'][number]; sys: (typeof layout.systems)[number]; d: number } | null = null;
+    for (const sys of layout.systems) {
+      for (const st of sys.staves) {
+        if (p.y < st.y - sp * 3.5 || p.y > st.y + sp * 7.5) continue;
+        const d = Math.abs(p.y - (st.y + sp * 2));
+        if (!best || d < best.d) best = { st, sys, d };
+      }
+    }
+    if (!best) return null;
+    const { st, sys } = best;
+    const mb = sys.measures.find((m) => p.x >= m.x && p.x < m.x + m.width);
+    if (!mb) return null;
+    const steps = Math.max(-8, Math.min(16, Math.round((st.y + sp * 4 - p.y) / (sp / 2))));
+    const score = project.score;
+    const pitch = pitchFromStaffStep(st.clef, steps, keyFifthsAt(score, mb.index));
+    const evs = layout.events
+      .filter((e) => e.measureIndex === mb.index && e.partId === st.partId && e.event.staff === st.staffIndex && !(e.event.kind === 'chord' && e.event.grace))
+      .sort((a, b) => a.start - b.start);
+    const voice = evs[0]?.voice ?? (st.staffIndex === 0 ? 1 : 5);
+    const own = evs.filter((e) => e.voice === voice);
+    const total = measureTicks(score, mb.index);
+    const unit = Math.max(60, Math.min(durationTicks(inputDuration), total));
+    let tick = 0;
+    let gx = mb.x + sp * 1.5;
+    const baseIdx = own.reduce((acc, e, i) => (e.x - sp * 0.9 <= p.x ? i : acc), -1);
+    if (baseIdx >= 0) {
+      const b = own[baseIdx]!;
+      const nextX = own[baseIdx + 1]?.x ?? mb.x + mb.width - sp;
+      const nextStart = own[baseIdx + 1]?.start ?? total;
+      const span = nextStart - b.start;
+      // trong một dấu lặng/nốt dài: bắt vào lưới theo trường độ đang chọn
+      const frac = Math.max(0, Math.min(0.999, (p.x - b.x + sp * 0.5) / Math.max(sp, nextX - b.x)));
+      tick = b.event.kind === 'rest' && span > unit ? b.start + Math.floor((frac * span) / unit) * unit : b.start;
+      gx = b.x + ((tick - b.start) / Math.max(1, span)) * (nextX - b.x);
+    } else if (own.length === 0) {
+      const frac = Math.max(0, Math.min(0.999, (p.x - mb.x) / mb.width));
+      tick = Math.floor((frac * total) / unit) * unit;
+      gx = mb.x + sp * 1.5 + (tick / total) * (mb.width - sp * 3);
+    }
+    return { partId: st.partId, staff: st.staffIndex, voice, measureIndex: mb.index, tick, pitch, x: gx, y: st.y + sp * 4 - (steps * sp) / 2, staffY: st.y, steps };
+  };
+  // ---- tay nắm trước dòng lời ca: kéo lên/xuống để chỉnh khoảng cách lời ca – khuông (xem trước trực tiếp)
+  const lyricHandles = (() => {
+    if (!editable) return [];
+    const bySys = new Map<number, number>();
+    for (const e of layout.events) {
+      const y = e.lyrics.find((l) => l.verse === Math.min(...e.lyrics.map((x) => x.verse)))?.y;
+      if (y === undefined) continue;
+      const cur = bySys.get(e.systemIndex);
+      if (cur === undefined || y < cur) bySys.set(e.systemIndex, y);
+    }
+    return [...bySys].map(([system, y]) => ({ system, y: y - layout.lyricStyle.fontPx * 0.35, x: layout.marginX - sp * 1.6 }));
+  })();
+  const startLyricDrag = (e: RMouseEvent, y: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const y0 = e.clientY;
+    const start = project.score.layout.lyricOffsetSp ?? 3;
+    const svg = svgRef.current;
+    let dy = 0;
+    const move = (ev: MouseEvent) => {
+      const raw = (ev.clientY - y0) / zoom;
+      const next = Math.max(0.5, Math.min(12, start + raw / sp));
+      dy = (next - start) * sp;
+      svg?.style.setProperty('--lyr-dy', `${dy}px`);
+      setLyricDrag({ y, dy });
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      svg?.style.removeProperty('--lyr-dy');
+      setLyricDrag(null);
+      const next = Math.round((start + dy / sp) * 4) / 4;
+      if (next !== start) useStore.getState().exec(setLyricStyle({ lyricOffsetSp: next }));
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+  const onInputMove = (e: RMouseEvent) => {
+    if (!inputOn) return;
+    setGhost(locate(e.clientX, e.clientY));
+  };
+  const onInputClick = (e: RMouseEvent) => {
+    if (!inputOn) return false;
+    const t = locate(e.clientX, e.clientY);
+    if (!t) return false;
+    const cmd = placeNote({ partId: t.partId, measureIndex: t.measureIndex, voice: t.voice, staff: t.staff, tick: t.tick, pitch: t.pitch, duration: inputDuration, addToChord: e.shiftKey });
+    useStore.getState().exec(cmd);
+    if (cmd.result.noteId) select({ noteIds: [cmd.result.noteId], eventIds: cmd.result.eventId ? [cmd.result.eventId] : [], measureRange: undefined });
+    usePlayback.getState().engine.previewNote(pitchToMidi(t.pitch));
+    return true;
+  };
+
   const onMeasureDown = (e: RMouseEvent, index: number) => {
+    if (inputOn) return; // chế độ nhập nốt: bấm để đặt nốt, không chọn ô
     dragStart.current = index;
     if (e.shiftKey && selection.measureRange) {
       const a = Math.min(selection.measureRange[0], index);
@@ -140,7 +250,11 @@ export function ScoreView({ editable = false, flaggedNoteIds = [] }: Props) {
       onMouseUp={() => (dragStart.current = null)}
       onMouseLeave={() => (dragStart.current = null)}
     >
-      <div className="mx-auto my-6 hm-paper rounded-md shadow-[0_1px_3px_rgb(0_0_0/0.12),0_8px_24px_rgb(0_0_0/0.08)]" style={{ width: layout.width * zoom }}>
+      <div className="relative mx-auto my-6 hm-paper rounded-md shadow-[0_1px_3px_rgb(0_0_0/0.12),0_8px_24px_rgb(0_0_0/0.08)]" style={{ width: layout.width * zoom }}>
+        {/* dạo đầu + đếm vào: ngay phía trên dòng nhạc đầu tiên (chỉ khi nghe ở Player) */}
+        {!editable && layout.systems[0]?.staves[0] && (
+          <CountIn left={layout.marginX * zoom} top={(layout.systems[0].staves[0].y - sp * 3.2) * zoom} />
+        )}
         <svg
           ref={svgRef}
           width={layout.width * zoom}
@@ -148,7 +262,10 @@ export function ScoreView({ editable = false, flaggedNoteIds = [] }: Props) {
           viewBox={`0 0 ${layout.width} ${layout.height}`}
           role="img"
           aria-label={`Bản nhạc ${project.score.meta.title}`}
-          onClick={() => select({ noteIds: [], eventIds: [], measureRange: undefined })}
+          onClick={(e) => { if (!onInputClick(e)) select({ noteIds: [], eventIds: [], measureRange: undefined }); }}
+          onMouseMove={onInputMove}
+          onMouseLeave={() => setGhost(null)}
+          style={inputOn ? { cursor: 'crosshair' } : undefined}
         >
           <ScoreSvgBody
             layout={layout}
@@ -161,7 +278,28 @@ export function ScoreView({ editable = false, flaggedNoteIds = [] }: Props) {
             onNoteClick={onNoteClick}
             onMeasureDown={onMeasureDown}
             onMeasureEnter={onMeasureEnter}
+            onMeasureClick={(e) => void onInputClick(e)}
           />
+          {editable && lyricHandles.map((h) => (
+            <g key={h.system} className="hm-lyric-handle" transform={`translate(${h.x} ${h.y})`} onMouseDown={(e) => startLyricDrag(e, h.y)} onClick={(e) => e.stopPropagation()}>
+              <title>Kéo lên/xuống để chỉnh vị trí lời ca</title>
+              <rect x={-sp * 0.9} y={-sp * 1.1} width={sp * 1.8} height={sp * 1.6} rx={sp * 0.35} />
+              {[-0.6, -0.3, 0].map((d) => <line key={d} x1={-sp * 0.45} x2={sp * 0.45} y1={d * sp - sp * 0.05} y2={d * sp - sp * 0.05} />)}
+            </g>
+          ))}
+          {lyricDrag && <line x1={layout.marginX} x2={layout.width - layout.marginX} y1={lyricDrag.y + lyricDrag.dy} y2={lyricDrag.y + lyricDrag.dy} stroke="var(--accent)" strokeDasharray="4 3" pointerEvents="none" />}
+          {inputOn && ghost && (
+            <g pointerEvents="none" className="hm-ghost">
+              {Array.from({ length: Math.max(0, Math.floor((-ghost.steps) / 2)) }, (_, i) => (
+                <line key={`b${i}`} x1={ghost.x - sp * 1.1} x2={ghost.x + sp * 1.1} y1={ghost.staffY + sp * 5 + i * sp} y2={ghost.staffY + sp * 5 + i * sp} />
+              ))}
+              {Array.from({ length: Math.max(0, Math.floor((ghost.steps - 8) / 2)) }, (_, i) => (
+                <line key={`t${i}`} x1={ghost.x - sp * 1.1} x2={ghost.x + sp * 1.1} y1={ghost.staffY - sp - i * sp} y2={ghost.staffY - sp - i * sp} />
+              ))}
+              <ellipse cx={ghost.x} cy={ghost.y} rx={sp * 0.66} ry={sp * 0.47} transform={`rotate(-20 ${ghost.x} ${ghost.y})`} />
+              <text x={ghost.x + sp * 1.2} y={ghost.y - sp * 0.9} fontSize={sp * 1.1}>{ghost.pitch.step}{ghost.pitch.alter > 0 ? '♯' : ghost.pitch.alter < 0 ? '♭' : ''}{ghost.pitch.octave}</text>
+            </g>
+          )}
           <rect ref={cursorRef} className="hm-cursor" x={0} y={0} width={2} height={0} fill="var(--hl)" opacity={0} pointerEvents="none" rx={1} />
         </svg>
       </div>
@@ -180,12 +318,14 @@ export interface ScoreSvgBodyProps {
   onNoteClick?: (e: RMouseEvent, noteId: string, eventId: string) => void;
   onMeasureDown?: (e: RMouseEvent, index: number) => void;
   onMeasureEnter?: (index: number) => void;
+  /** bấm vào nền ô nhịp (chế độ nhập nốt: đặt nốt) */
+  onMeasureClick?: (e: RMouseEvent) => void;
 }
 
 /** Phần thân SVG của bản nhạc – dùng chung cho màn hình, trang in/PDF và xuất SVG/PNG */
 export function ScoreSvgBody({
   layout, score, selNotes = new Set(), flagged = new Set(), selRange = [-1, -2], previewChords = false, unverified = new Set(),
-  onNoteClick = () => {}, onMeasureDown = () => {}, onMeasureEnter = () => {},
+  onNoteClick = () => {}, onMeasureDown = () => {}, onMeasureEnter = () => {}, onMeasureClick = () => {},
 }: ScoreSvgBodyProps) {
   const { sp } = layout;
   const staffH = sp * 4;
@@ -208,7 +348,7 @@ export function ScoreSvgBody({
               x={mb.x} y={sys.y - sp * 2} width={mb.width} height={sys.height + sp * 4}
               onMouseDown={(e) => onMeasureDown(e, mb.index)}
               onMouseEnter={() => onMeasureEnter(mb.index)}
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); onMeasureClick(e); }}
             />
           ))}
           {sys.staves.map((st, si) => {
@@ -217,15 +357,16 @@ export function ScoreSvgBody({
             return (
               <g key={si} pointerEvents="none">
                 {[0, 1, 2, 3, 4].map((l) => <line key={l} x1={x0} x2={x1} y1={st.y + l * sp} y2={st.y + l * sp} stroke="currentColor" strokeWidth={0.8} />)}
-                <text x={x0 + 4} y={st.y + (st.clef.sign === 'F' ? sp * 1.1 : sp * 3)} fontSize={st.clef.sign === 'F' ? sp * 3.4 : sp * 4.6} fontFamily="var(--font-music)" fill="currentColor">
-                  {st.clef.sign === 'F' ? '𝄢' : st.clef.sign === 'C' ? '𝄡' : '𝄞'}
+                {/* SMuFL: 1 em = 4 khoảng dòng kẻ; gốc khoá Sol ở dòng 2, khoá Fa ở dòng 4, khoá Đô ở dòng giữa */}
+                <text x={x0 + sp * 0.6} y={st.y + (st.clef.sign === 'F' ? sp : st.clef.sign === 'C' ? sp * 2 : sp * 3)} fontSize={sp * 4} fontFamily="Bravura" fill="currentColor">
+                  {st.clef.sign === 'F' ? '\uE062' : st.clef.sign === 'C' ? '\uE05C' : '\uE050'}
                 </text>
                 {st.clef.octaveChange === -1 && <text x={x0 + sp * 1.3} y={st.y + sp * 6.3} fontSize={9} fill="currentColor" fontStyle="italic">8</text>}
                 <KeySig x={x0 + sp * 3.6} y={st.y} sp={sp} fifths={sys.keyFifths} clef={st.clef.sign} />
                 {sys.timeSig && (
-                  <g fontSize={sp * 2.4} fontWeight={700} fontFamily="Georgia, serif" textAnchor="middle" fill="currentColor">
-                    <text x={x0 + sp * 4.6 + Math.abs(sys.keyFifths) * sp * 1.1} y={st.y + sp * 1.9}>{sys.timeSig.beats}</text>
-                    <text x={x0 + sp * 4.6 + Math.abs(sys.keyFifths) * sp * 1.1} y={st.y + sp * 3.9}>{sys.timeSig.beatType}</text>
+                  <g fontSize={sp * 4} fontFamily="Bravura" textAnchor="middle" fill="currentColor">
+                    <text x={x0 + sp * 4.9 + Math.abs(sys.keyFifths) * sp * 1.05} y={st.y + sp}>{smuflDigits(sys.timeSig.beats)}</text>
+                    <text x={x0 + sp * 4.9 + Math.abs(sys.keyFifths) * sp * 1.05} y={st.y + sp * 3}>{smuflDigits(sys.timeSig.beatType)}</text>
                   </g>
                 )}
                 {sys.measures.map((mb) => {
@@ -274,6 +415,13 @@ function RepeatDots({ x, y, sp }: { x: number; y: number; sp: number }) {
   );
 }
 
+/** Mã SMuFL (font Bravura) */
+const SMUFL_ACC: Record<string, string> = { '𝄫': '\uE264', '♭': '\uE260', '♮': '\uE261', '♯': '\uE262', '𝄪': '\uE263' };
+const SMUFL_REST: Record<string, string> = {
+  whole: '\uE4E3', half: '\uE4E4', quarter: '\uE4E5', eighth: '\uE4E6', '16th': '\uE4E7', '32nd': '\uE4E8', '64th': '\uE4E9',
+};
+const smuflDigits = (n: number) => String(n).split('').map((d) => String.fromCharCode(0xe080 + Number(d))).join('');
+
 function KeySig({ x, y, sp, fifths, clef }: { x: number; y: number; sp: number; fifths: number; clef: string }) {
   // vị trí (nửa khoảng tính từ dòng dưới) cho khóa Sol; khóa Fa thấp hơn 2 bậc
   const sharps = [8, 5, 9, 6, 3, 7, 4];
@@ -281,9 +429,9 @@ function KeySig({ x, y, sp, fifths, clef }: { x: number; y: number; sp: number; 
   const shift = clef === 'F' ? -2 : 0;
   const list = fifths > 0 ? sharps.slice(0, fifths) : flats.slice(0, -fifths);
   return (
-    <g fontSize={sp * 2.2} fill="currentColor" fontFamily="var(--font-music)">
+    <g fontSize={sp * 4} fill="currentColor" fontFamily="Bravura">
       {list.map((pos, i) => (
-        <text key={i} x={x + i * sp * 1.1} y={y + sp * 4 - ((pos + shift) * sp) / 2 + sp * 0.7}>{fifths > 0 ? '♯' : '♭'}</text>
+        <text key={i} x={x + i * sp * 1.05} y={y + sp * 4 - ((pos + shift) * sp) / 2}>{fifths > 0 ? '\uE262' : '\uE260'}</text>
       ))}
     </g>
   );
@@ -300,16 +448,10 @@ function EventGlyph({ box, sp, selNotes, flagged, onNoteClick, lyric, unverified
     const mid = box.staffY + sp * 2;
     const t = ev.measureRest ? 'whole' : ev.duration.type;
     return (
-      <g id={ev.id} fill="currentColor" pointerEvents="none">
-        {t === 'whole' && <rect x={box.x} y={box.staffY + sp} width={sp * 1.4} height={sp * 0.55} />}
-        {t === 'half' && <rect x={box.x} y={mid - sp * 0.55} width={sp * 1.4} height={sp * 0.55} />}
-        {t === 'quarter' && <path d={`M${box.x + 2} ${mid - sp * 1.5} l${sp * 0.7} ${sp * 0.8} l${-sp * 0.6} ${sp * 0.7} l${sp * 0.7} ${sp * 0.8} c${-sp * 0.9} ${-sp * 0.3} ${-sp * 0.9} ${sp * 0.6} ${-sp * 0.1} ${sp * 0.9}`} stroke="currentColor" strokeWidth={1.6} fill="none" />}
-        {DUR_FLAGS[t] && (
-          <g>
-            <circle cx={box.x + sp * 0.5} cy={mid - sp * 0.6} r={sp * 0.35} />
-            <path d={`M${box.x + sp * 0.5} ${mid - sp * 0.5} L${box.x + sp * 1.2} ${mid - sp * 0.8} L${box.x + sp * 0.6} ${mid + sp * 1.4}`} stroke="currentColor" strokeWidth={1.2} fill="none" />
-          </g>
-        )}
+      <g id={ev.id} fill="currentColor" className={`hm-rest ${selNotes.has(ev.id) ? 'hm-selected' : ''}`} onClick={(e) => onNoteClick(e, '', ev.id)}>
+        <rect x={box.x - sp * 0.4} y={box.staffY} width={sp * 2} height={sp * 4} fill="transparent" />
+        {/* dấu lặng SMuFL: lặng tròn treo dưới dòng 4, các dấu khác đặt trên dòng giữa */}
+        <text x={box.x} y={t === 'whole' ? box.staffY + sp : mid} fontSize={sp * 4} fontFamily="Bravura">{SMUFL_REST[t] ?? SMUFL_REST.quarter}</text>
         {ev.duration.dots > 0 && <circle cx={box.x + sp * 1.9} cy={mid - sp * 0.5} r={1.4} />}
       </g>
     );
@@ -338,7 +480,7 @@ function EventGlyph({ box, sp, selNotes, flagged, onNoteClick, lyric, unverified
           {h.ledger.map((l) => (
             <line key={l} x1={box.x - sp * 1.1} x2={box.x + sp * 1.1} y1={staffBottom - (l * sp) / 2} y2={staffBottom - (l * sp) / 2} stroke="currentColor" strokeWidth={0.9} />
           ))}
-          {h.accidental && <text x={box.x - sp * 2.1} y={h.y + sp * 0.5} fontSize={sp * 1.9} fontFamily="var(--font-music)" fill="currentColor">{h.accidental}</text>}
+          {h.accidental && <text x={box.x - sp * 0.75 - sp * 0.3} y={h.y} fontSize={sp * 4 * scale} textAnchor="end" fontFamily="Bravura" fill="currentColor">{SMUFL_ACC[h.accidental] ?? h.accidental}</text>}
           <ellipse
             className="hm-head"
             cx={box.x} cy={h.y} rx={sp * 0.66 * scale} ry={sp * 0.47 * scale}
@@ -365,7 +507,7 @@ function EventGlyph({ box, sp, selNotes, flagged, onNoteClick, lyric, unverified
         const cx = box.x + l.dx;
         const w = l.text.length * lyric.fontPx * 0.56;
         return (
-          <g key={l.verse} pointerEvents="none" fill="currentColor" fontFamily={`'${lyric.family}', 'Noto Serif', Georgia, serif`} fontSize={lyric.fontPx}
+          <g key={l.verse} className="hm-lyric" pointerEvents="none" fill="currentColor" fontFamily={`'${lyric.family}', 'Noto Serif', Georgia, serif`} fontSize={lyric.fontPx}
             fontStyle={lyric.italicVerses.includes(l.verse) ? 'italic' : undefined}>
             {l.verseLabel && <text x={cx - w / 2 - lyric.fontPx * 0.4} y={l.y} textAnchor="end">{l.verseLabel}</text>}
             <text x={cx} y={l.y} textAnchor="middle">{l.text}</text>
